@@ -7,6 +7,8 @@ import {
 } from 'lucide-vue-next';
 import { format, differenceInDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+// 🟢 新增：引入 Reka UI 需要的日期解析工具
+import { parseDate } from '@internationalized/date';
 
 // 引入 Shadcn 组件
 import { Button } from '@/components/ui/button';
@@ -43,6 +45,7 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command';
+import JoLogo from '@/components/JoLogo.vue';
 
 // --- 常量定义 ---
 const STORAGE_KEY = 'jos-todo-list-data';
@@ -145,9 +148,15 @@ const filteredTasks = computed(() => {
   });
 });
 
+// 🟢 修复：时间合并逻辑
 const combineDateTime = () => {
   if (!form.value.date) return '';
-  const date = new Date(form.value.date);
+
+  // form.value.date 可能是 Reka 的 CalendarDate 对象，我们需要先转成字符串
+  // CalendarDate.toString() 会返回 "YYYY-MM-DD"
+  const dateStr = form.value.date.toString();
+  const date = new Date(dateStr);
+
   const [hours, minutes] = form.value.time.split(':');
   date.setHours(parseInt(hours), parseInt(minutes));
   return date.toISOString();
@@ -183,21 +192,35 @@ const handleSubmit = () => {
   resetForm();
 };
 
+// 🟢 核心修复：编辑任务逻辑
 const editTask = (task) => {
   let d = undefined;
   let t = '12:00';
+
   if (task.dueDate) {
     const dateObj = new Date(task.dueDate);
-    d = dateObj;
+
+    // 1. 提取时间部分
     const hours = String(dateObj.getHours()).padStart(2, '0');
     const minutes = String(dateObj.getMinutes()).padStart(2, '0');
     t = `${hours}:${minutes}`;
+
+    // 2. 关键修复：将 ISO 字符串 (YYYY-MM-DD) 解析为 Reka 需要的 CalendarDate 对象
+    // 使用 split('T')[0] 获取纯日期部分，然后用 parseDate 转换
+    try {
+      const isoDateStr = task.dueDate.split('T')[0];
+      d = parseDate(isoDateStr); // 这会生成一个带 .copy() 方法的对象
+    } catch (e) {
+      console.error("日期解析失败", e);
+      d = undefined;
+    }
   }
+
   form.value = {
     title: task.title,
     desc: task.desc,
     priority: task.priority,
-    date: d,
+    date: d, // 现在这里是 CalendarDate 对象，组件不会崩了
     time: t,
     categories: Array.isArray(task.categories) ? [...task.categories] : []
   };
@@ -207,12 +230,17 @@ const editTask = (task) => {
 
 const handleCategoryChange = (cat, isChecked) => {
   if (!Array.isArray(form.value.categories)) form.value.categories = [];
+
   let newCategories = [...form.value.categories];
+
   if (isChecked) {
-    if (!newCategories.includes(cat)) newCategories.push(cat);
+    if (!newCategories.includes(cat)) {
+      newCategories.push(cat);
+    }
   } else {
     newCategories = newCategories.filter(item => item !== cat);
   }
+
   form.value.categories = newCategories;
 };
 
@@ -291,9 +319,7 @@ const getPriorityStyles = (p) => {
     <header class="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md">
       <div class="container max-w-5xl mx-auto flex h-16 items-center justify-between px-4 sm:px-6">
         <div class="flex items-center gap-3">
-          <div class="h-8 w-8 rounded-lg bg-primary flex items-center justify-center text-primary-foreground">
-            <LayoutDashboard class="h-4 w-4" />
-          </div>
+          <JoLogo class="h-8 w-8 sm:h-9 sm:w-9 shrink-0 mr-1" />
           <span class="font-bold text-lg tracking-tight">Jo's <span class="text-muted-foreground">TodoList</span></span>
         </div>
 
@@ -311,7 +337,7 @@ const getPriorityStyles = (p) => {
       <div class="lg:col-span-4 space-y-6">
         <Card class="sticky top-24 border-border shadow-sm">
           <CardHeader class="pb-3">
-            <CardTitle class="text-lg font-semibold tracking-tight">{{ editingId ? '编辑任务' : '新增代办' }}</CardTitle>
+            <CardTitle class="text-lg font-semibold tracking-tight">{{ editingId ? '编辑任务' : '新增待办' }}</CardTitle>
           </CardHeader>
           <CardContent class="space-y-4">
             <div class="space-y-2">
@@ -330,8 +356,8 @@ const getPriorityStyles = (p) => {
                 <div v-for="cat in CATEGORY_OPTIONS" :key="cat" class="flex items-center space-x-2">
                   <Checkbox
                     :id="`category-${cat}`"
-                    :checked="form.categories.includes(cat)"
-                    @update:checked="(checked) => handleCategoryChange(cat, checked)"
+                    :model-value="form.categories.includes(cat)"
+                    @update:model-value="(val) => handleCategoryChange(cat, val)"
                   />
                   <label :for="`category-${cat}`" class="text-sm font-medium leading-none cursor-pointer text-muted-foreground hover:text-foreground select-none">
                     {{ cat }}
@@ -363,7 +389,7 @@ const getPriorityStyles = (p) => {
                     <Button variant="outline" class="w-full justify-start text-left font-normal bg-muted/30 border-input h-10 px-3 overflow-hidden" :class="!form.date ? 'text-muted-foreground' : ''">
                       <CalendarIcon class="mr-2 h-4 w-4 shrink-0" />
                       <span v-if="form.date" class="truncate">
-                        {{ format(form.date, "yyyy-MM-dd") }} {{ form.time }}
+                        {{ form.date ? format(new Date(form.date.toString()), "yyyy-MM-dd") : '' }} {{ form.time }}
                       </span>
                       <span v-else>选择日期</span>
                     </Button>
