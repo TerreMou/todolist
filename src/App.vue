@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import {
   Trash2, Plus, Calendar as CalendarIcon, CheckCircle2, Circle, Search,
-  LayoutDashboard, PenSquare, Clock, AlertTriangle, PieChart,
+  LayoutDashboard, PenSquare, Clock, AlertTriangle, AlertCircle, PieChart,
   ListFilter, X, Check, Filter
 } from 'lucide-vue-next';
 import { format, differenceInDays } from 'date-fns';
@@ -50,6 +50,17 @@ import JoLogo from '@/components/JoLogo.vue';
 // --- 常量定义 ---
 const STORAGE_KEY = 'jos-todo-list-data';
 const CATEGORY_OPTIONS = ['MKT', 'Event', 'Payment', 'Others'];
+const TRASH_RETENTION_DAYS = 30;
+const NOTIFICATION_DURATION = 3000;
+const DEFAULT_TIME = '12:00';
+
+// 优先级样式配置
+const PRIORITY_STYLES_CONFIG = {
+  high: 'border-red-500/30 bg-red-100 text-red-700 hover:bg-red-200',
+  medium: 'border-orange-500/30 bg-orange-100 text-orange-700 hover:bg-orange-200',
+  low: 'border-blue-500/30 bg-blue-100 text-blue-700 hover:bg-blue-200',
+  none: 'border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200'
+};
 
 // --- 状态定义 ---
 const tasks = ref([]);
@@ -61,7 +72,7 @@ const form = ref({
   desc: '',
   priority: 'low',
   date: undefined,
-  time: '12:00',
+  time: DEFAULT_TIME,
   categories: []
 });
 
@@ -69,6 +80,85 @@ const searchQuery = ref('');
 const filterStatus = ref('all');
 const filterCategories = ref([]);
 const notification = ref({ show: false, message: '', type: 'success' });
+
+// --- 工具函数 ---
+
+/** 解析日期和时间为 ISO 字符串 */
+const combineDateTime = () => {
+  if (!form.value.date) return '';
+  const dateStr = form.value.date.toString();
+  const date = new Date(dateStr);
+  const [hours, minutes] = form.value.time.split(':');
+  date.setHours(parseInt(hours), parseInt(minutes));
+  return date.toISOString();
+};
+
+/** 从 ISO 日期字符串提取时间 */
+const extractTimeFromISO = (isoString) => {
+  const dateObj = new Date(isoString);
+  const hours = String(dateObj.getHours()).padStart(2, '0');
+  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
+/** 从 ISO 日期字符串提取日期为 CalendarDate */
+const extractDateFromISO = (isoString) => {
+  try {
+    const isoDateStr = isoString.split('T')[0];
+    return parseDate(isoDateStr);
+  } catch (e) {
+    console.error('日期解析失败', e);
+    return undefined;
+  }
+};
+
+/** 格式化日期为可读字符串 */
+const formatDate = (iso) => iso ? format(new Date(iso), 'MMM do HH:mm', { locale: zhCN }) : '';
+
+/** 获取任务剩余时间 */
+const getRemainingTime = (iso) => {
+  if (!iso) return '';
+  const diff = new Date(iso) - new Date();
+  if (diff < 0) return '已过期';
+  const days = Math.floor(diff / (86400000));
+  return days > 0 ? `${days}天` : '即将到期';
+};
+
+/** 判断任务是否紧急（≤3 天且未完成） */
+const isUrgent = (task) => {
+  if (task.completed || !task.dueDate) return false;
+  const due = new Date(task.dueDate);
+  const now = new Date();
+  const diff = differenceInDays(due, now);
+  return due > now && diff <= 3 && diff >= -1;
+};
+
+/** 获取优先级的样式类名 */
+const getPriorityStyles = (priority) => PRIORITY_STYLES_CONFIG[priority] || PRIORITY_STYLES_CONFIG.none;
+
+/** 验证任务标题 */
+const validateTaskTitle = (title) => {
+  if (!title.trim()) {
+    showNotification('请输入任务标题', 'error');
+    return false;
+  }
+  return true;
+};
+
+/** 验证截止时间（新建时不允许过期） */
+const validateDueDate = (dueDate, isEditing) => {
+  if (dueDate && new Date(dueDate) < new Date() && !isEditing) {
+    showNotification('截止时间无效', 'error');
+    return false;
+  }
+  return true;
+};
+
+/** 显示通知 */
+const showNotification = (msg, type = 'success') => {
+  notification.value = { show: true, message: msg, type };
+  setTimeout(() => notification.value.show = false, NOTIFICATION_DURATION);
+};
 
 // --- 核心逻辑 ---
 
@@ -90,7 +180,8 @@ onMounted(() => {
       tasks.value = [];
     }
   }
-  const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+  // 自动清理超过 30 天的删除项
+  const thirtyDaysAgo = Date.now() - (TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
   tasks.value = tasks.value.filter(t => !t.isDeleted || (t.isDeleted && new Date(t.deletedAt).getTime() > thirtyDaysAgo));
 });
 
@@ -105,14 +196,6 @@ const stats = computed(() => {
   const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
   return { total, completed, progress };
 });
-
-const isUrgent = (task) => {
-  if (task.completed || !task.dueDate) return false;
-  const due = new Date(task.dueDate);
-  const now = new Date();
-  const diff = differenceInDays(due, now);
-  return due > now && diff <= 3 && diff >= -1;
-};
 
 // 列表排序与过滤
 const filteredTasks = computed(() => {
@@ -132,6 +215,7 @@ const filteredTasks = computed(() => {
     );
   }
 
+  // 排序：已完成的最后，然后是紧急任务，再按优先级，最后按截止日期
   return result.sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
 
@@ -141,34 +225,20 @@ const filteredTasks = computed(() => {
       if (urgentA !== urgentB) return urgentA ? -1 : 1;
     }
 
-    const pMap = { high: 3, medium: 2, low: 1, none: 0 };
-    if (pMap[a.priority] !== pMap[b.priority]) return pMap[b.priority] - pMap[a.priority];
+    const priorityMap = { high: 3, medium: 2, low: 1, none: 0 };
+    if (priorityMap[a.priority] !== priorityMap[b.priority]) {
+      return priorityMap[b.priority] - priorityMap[a.priority];
+    }
 
-    return new Date(a.dueDate) - new Date(b.dueDate);
+    return new Date(a.dueDate || 0) - new Date(b.dueDate || 0);
   });
 });
 
-// 🟢 修复：时间合并逻辑
-const combineDateTime = () => {
-  if (!form.value.date) return '';
-
-  // form.value.date 可能是 Reka 的 CalendarDate 对象，我们需要先转成字符串
-  // CalendarDate.toString() 会返回 "YYYY-MM-DD"
-  const dateStr = form.value.date.toString();
-  const date = new Date(dateStr);
-
-  const [hours, minutes] = form.value.time.split(':');
-  date.setHours(parseInt(hours), parseInt(minutes));
-  return date.toISOString();
-};
-
 const handleSubmit = () => {
-  if (!form.value.title.trim()) { showNotification('请输入任务标题', 'error'); return; }
+  if (!validateTaskTitle(form.value.title)) return;
 
   const finalDueDate = combineDateTime();
-  if (finalDueDate && new Date(finalDueDate) < new Date() && !editingId.value) {
-    showNotification('截止时间无效', 'error'); return;
-  }
+  if (!validateDueDate(finalDueDate, !!editingId.value)) return;
 
   const safeCategories = form.value.categories ? [...form.value.categories] : [];
 
@@ -182,11 +252,19 @@ const handleSubmit = () => {
 
   if (editingId.value) {
     const index = tasks.value.findIndex(t => t.id === editingId.value);
-    if (index !== -1) tasks.value[index] = { ...tasks.value[index], ...taskData };
-    showNotification('任务已更新');
+    if (index !== -1) {
+      tasks.value[index] = { ...tasks.value[index], ...taskData };
+      showNotification('任务已更新');
+    }
     editingId.value = null;
   } else {
-    tasks.value.push({ id: Date.now(), ...taskData, completed: false, isDeleted: false, createdAt: new Date().toISOString() });
+    tasks.value.push({
+      id: Date.now(),
+      ...taskData,
+      completed: false,
+      isDeleted: false,
+      createdAt: new Date().toISOString()
+    });
     showNotification('任务已创建');
   }
   resetForm();
@@ -194,54 +272,19 @@ const handleSubmit = () => {
 
 // 🟢 核心修复：编辑任务逻辑
 const editTask = (task) => {
-  let d = undefined;
-  let t = '12:00';
-
-  if (task.dueDate) {
-    const dateObj = new Date(task.dueDate);
-
-    // 1. 提取时间部分
-    const hours = String(dateObj.getHours()).padStart(2, '0');
-    const minutes = String(dateObj.getMinutes()).padStart(2, '0');
-    t = `${hours}:${minutes}`;
-
-    // 2. 关键修复：将 ISO 字符串 (YYYY-MM-DD) 解析为 Reka 需要的 CalendarDate 对象
-    // 使用 split('T')[0] 获取纯日期部分，然后用 parseDate 转换
-    try {
-      const isoDateStr = task.dueDate.split('T')[0];
-      d = parseDate(isoDateStr); // 这会生成一个带 .copy() 方法的对象
-    } catch (e) {
-      console.error("日期解析失败", e);
-      d = undefined;
-    }
-  }
+  const dateObj = task.dueDate ? extractDateFromISO(task.dueDate) : undefined;
+  const timeStr = task.dueDate ? extractTimeFromISO(task.dueDate) : DEFAULT_TIME;
 
   form.value = {
     title: task.title,
     desc: task.desc,
     priority: task.priority,
-    date: d, // 现在这里是 CalendarDate 对象，组件不会崩了
-    time: t,
+    date: dateObj,
+    time: timeStr,
     categories: Array.isArray(task.categories) ? [...task.categories] : []
   };
   editingId.value = task.id;
   window.scrollTo({ top: 0, behavior: 'smooth' });
-};
-
-const handleCategoryChange = (cat, isChecked) => {
-  if (!Array.isArray(form.value.categories)) form.value.categories = [];
-
-  let newCategories = [...form.value.categories];
-
-  if (isChecked) {
-    if (!newCategories.includes(cat)) {
-      newCategories.push(cat);
-    }
-  } else {
-    newCategories = newCategories.filter(item => item !== cat);
-  }
-
-  form.value.categories = newCategories;
 };
 
 // 筛选器逻辑
@@ -258,23 +301,50 @@ const removeFilterCategory = (cat) => {
   filterCategories.value = filterCategories.value.filter(c => c !== cat);
 };
 
-const softDelete = (id) => {
-  const task = tasks.value.find(t => t.id === id);
-  if (task) { task.isDeleted = true; task.deletedAt = new Date().toISOString(); showNotification('已移至回收站'); }
+// 类别管理
+const handleCategoryChange = (cat, isChecked) => {
+  if (!Array.isArray(form.value.categories)) form.value.categories = [];
+
+  let newCategories = [...form.value.categories];
+
+  if (isChecked) {
+    if (!newCategories.includes(cat)) {
+      newCategories.push(cat);
+    }
+  } else {
+    newCategories = newCategories.filter(item => item !== cat);
+  }
+
+  form.value.categories = newCategories;
 };
 
+// 任务操作
 const toggleStatus = (id) => {
   const task = tasks.value.find(t => t.id === id);
   if (task) task.completed = !task.completed;
 };
 
+const softDelete = (id) => {
+  const task = tasks.value.find(t => t.id === id);
+  if (task) {
+    task.isDeleted = true;
+    task.deletedAt = new Date().toISOString();
+    showNotification('已移至回收站');
+  }
+};
+
 const restoreTask = (id) => {
   const task = tasks.value.find(t => t.id === id);
-  if (task) { task.isDeleted = false; task.deletedAt = null; showNotification('任务已恢复'); }
+  if (task) {
+    task.isDeleted = false;
+    task.deletedAt = null;
+    showNotification('任务已恢复');
+  }
 };
 
 const permanentDelete = (id) => {
   tasks.value = tasks.value.filter(t => t.id !== id);
+  showNotification('任务已永久删除');
 };
 
 const emptyTrash = () => {
@@ -283,33 +353,15 @@ const emptyTrash = () => {
 };
 
 const resetForm = () => {
-  form.value = { title: '', desc: '', priority: 'low', date: undefined, time: '12:00', categories: [] };
-  editingId.value = null;
-};
-
-const showNotification = (msg, type = 'success') => {
-  notification.value = { show: true, message: msg, type };
-  setTimeout(() => notification.value.show = false, 3000);
-};
-
-const formatDate = (iso) => iso ? format(new Date(iso), 'MMM do HH:mm', { locale: zhCN }) : '';
-
-const getRemainingTime = (iso) => {
-  if (!iso) return '';
-  const diff = new Date(iso) - new Date();
-  if (diff < 0) return '已过期';
-  const days = Math.floor(diff / (86400000));
-  return days > 0 ? `${days}天` : '即将到期';
-};
-
-const getPriorityStyles = (p) => {
-  const map = {
-    high: 'border-red-500/30 bg-red-100 text-red-700 hover:bg-red-200',
-    medium: 'border-orange-500/30 bg-orange-100 text-orange-700 hover:bg-orange-200',
-    low: 'border-blue-500/30 bg-blue-100 text-blue-700 hover:bg-blue-200',
-    none: 'border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200'
+  form.value = {
+    title: '',
+    desc: '',
+    priority: 'low',
+    date: undefined,
+    time: DEFAULT_TIME,
+    categories: []
   };
-  return map[p] || map.none;
+  editingId.value = null;
 };
 </script>
 
