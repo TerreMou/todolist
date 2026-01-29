@@ -7,9 +7,7 @@ import {
   ArchiveRestore, FolderOpen, Kanban, Settings2, MoreHorizontal, Eraser,
   Download, Upload, FileJson, HardDrive, Eye, EyeOff, Archive, MoreVertical, RotateCcw, AlertOctagon
 } from 'lucide-vue-next';
-import {format, differenceInDays} from 'date-fns';
-import {zhCN} from 'date-fns/locale';
-import {parseDate, today, getLocalTimeZone, CalendarDate} from '@internationalized/date';
+import {parseDate} from '@internationalized/date';
 
 // UI Components (Shadcn)
 import {Button} from '@/components/ui/button';
@@ -34,29 +32,34 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 
-import JoLogo from '@/components/JoLogo.vue';
 import EnhancedDatePicker from '@/components/EnhancedDatePicker.vue';
 
-// --- Constants ---
-const STORAGE_KEY = 'jos-todo-list-data';
-const STORAGE_KEY_PROJECTS = 'jos-todo-list-projects';
-const CATEGORY_OPTIONS = ['MKT', 'Event', 'Payment', 'Others'];
-const TRASH_RETENTION_DAYS = 30;
-const NOTIFICATION_DURATION = 3000;
-const DEFAULT_TIME = '12:00';
-
-const PRIORITY_STYLES_CONFIG = {
-  high: 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200',
-  medium: 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200',
-  low: 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200',
-  none: 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
-};
-
-const PROJECT_STATUS_OPTIONS = [
-  {value: 'not_started', label: '未开始', color: 'bg-slate-100 text-slate-500'},
-  {value: 'in_progress', label: '进行中', color: 'bg-blue-100 text-blue-600'},
-  {value: 'completed', label: '已完成', color: 'bg-green-100 text-green-600'}
-];
+// Constants & Composables
+import {
+  CATEGORY_OPTIONS,
+  DEFAULT_TIME,
+  PRIORITY_STYLES_CONFIG,
+  PROJECT_STATUS_OPTIONS
+} from '@/constants';
+import {
+  combineDateTime,
+  formatDate,
+  formatSimpleDate,
+  generateTimeOptions,
+  extractDateFromISO,
+  extractTimeFromISO
+} from '@/utils/dateTime';
+import {
+  isUrgent,
+  getPriorityStyles,
+  getProjectStatusStyle,
+  getProjectStatusLabel,
+  sortAndFilterTasks
+} from '@/utils/validators';
+import { useNotification } from '@/composables/useNotification';
+import { useStorage } from '@/composables/useStorage';
+import { useTasks } from '@/composables/useTasks';
+import { useProjects } from '@/composables/useProjects';
 
 // --- State ---
 const tasks = ref([]);
@@ -98,149 +101,138 @@ const filterStatus = ref('all');
 const filterCategories = ref([]);
 const viewMode = ref('project');
 
-const notification = ref({show: false, message: '', type: 'success'});
+// File input ref
 const fileInput = ref(null);
 const pendingDeleteProjectId = ref(null);
 
-// --- Utils ---
+// --- Composables ---
+const { notification, showNotification } = useNotification();
+const { loadFromLocalStorage, saveToLocalStorage, exportData, importData } = useStorage();
+const {
+  activeTasks,
+  trashTasks,
+  getSortedFilteredTasks,
+  createTask,
+  updateTask,
+  toggleTaskStatus,
+  prepareTaskForEdit,
+  softDeleteTask,
+  restoreTask,
+  permanentDeleteTask,
+  emptyTaskTrash,
+  getProjectTaskStats
+} = useTasks(tasks, projects, showNotification);
+const {
+  activeProjects,
+  trashProjects,
+  completedProjectsList,
+  selectableProjects,
+  createProject,
+  updateProject,
+  updateProjectStatus,
+  unarchiveProject,
+  getProjectTaskCount,
+  softDeleteProject,
+  restoreProject,
+  confirmSoftDeleteProject,
+  confirmPermanentDeleteProject,
+  emptyProjectTrash
+} = useProjects(projects, tasks, showNotification);
 
-const combineDateTime = () => {
-  if (!form.value.date) return '';
-  const dateStr = form.value.date.toString();
-  const date = new Date(dateStr);
-  const [hours, minutes] = form.value.time.split(':');
-  date.setHours(parseInt(hours), parseInt(minutes));
-  return date.toISOString();
-};
+// --- Computed Properties ---
 
-// 🕒 生成 30分钟间隔的时间选项 (00:00, 00:30 ... 23:30)
-const timeOptions = computed(() => {
-  const times = [];
-  for (let i = 0; i < 24; i++) {
-    const h = i.toString().padStart(2, '0');
-    times.push(`${h}:00`);
-    times.push(`${h}:30`);
-  }
-  return times;
+// Time options 计算属性
+const timeOptions = computed(() => generateTimeOptions());
+
+// 统计信息
+const stats = computed(() => {
+  const total = activeTasks.value.length;
+  const completed = activeTasks.value.filter(t => t.completed).length;
+  const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
+  return { total, completed, progress };
 });
 
-const extractTimeFromISO = (isoString) => {
-  const dateObj = new Date(isoString);
-  const hours = String(dateObj.getHours()).padStart(2, '0');
-  const minutes = String(dateObj.getMinutes()).padStart(2, '0');
-  return `${hours}:${minutes}`;
-};
+// 看板视图的分组任务
+const groupedTasks = computed(() => {
+  const groups = [];
+  const filteredTasks = getSortedFilteredTasks(
+    activeTasks.value,
+    searchQuery.value,
+    filterStatus.value,
+    filterCategories.value
+  );
 
-const extractDateFromISO = (isoString) => {
-  try {
-    const isoDateStr = isoString.split('T')[0];
-    return parseDate(isoDateStr);
-  } catch (e) {
-    return undefined;
-  }
-};
+  // 1. 未归档任务
+  const inboxTasks = filteredTasks.filter(t => !t.projectId || t.projectId === 'none');
+  groups.push({
+    type: 'inbox',
+    data: {
+      id: 'none',
+      title: '📂 未归档任务',
+      desc: '不属于任何特定项目的独立任务',
+      status: 'active'
+    },
+    tasks: inboxTasks,
+    progress: 0
+  });
 
-const formatDate = (iso) => iso ? format(new Date(iso), 'MMM do HH:mm', {locale: zhCN}) : '';
-const formatSimpleDate = (iso) => iso ? format(new Date(iso), 'yyyy/MM/dd', {locale: zhCN}) : '-';
+  // 2. 活跃项目任务
+  activeProjects.value.forEach(proj => {
+    if (proj.status === 'completed') return;
 
-const isUrgent = (task) => {
-  if (task.completed || !task.dueDate) return false;
-  const due = new Date(task.dueDate);
-  const now = new Date();
-  const diff = differenceInDays(due, now);
-  return due > now && diff <= 3 && diff >= -1;
-};
+    const projTasks = filteredTasks.filter(t => t.projectId === proj.id);
+    const stats = getProjectTaskStats(proj.id);
 
-const getPriorityStyles = (priority) => PRIORITY_STYLES_CONFIG[priority] || PRIORITY_STYLES_CONFIG.none;
+    groups.push({
+      type: 'project',
+      data: proj,
+      tasks: projTasks,
+      progress: stats.progress
+    });
+  });
 
-const getProjectStatusStyle = (status) => {
-  const s = PROJECT_STATUS_OPTIONS.find(opt => opt.value === status);
-  return s ? s.color : PROJECT_STATUS_OPTIONS[0].color;
-};
-const getProjectStatusLabel = (status) => {
-  const s = PROJECT_STATUS_OPTIONS.find(opt => opt.value === status);
-  return s ? s.label : '未开始';
-};
+  // 搜索时过滤空的分组
+  if (!searchQuery.value.trim()) return groups;
 
-const validateTaskTitle = (title) => {
-  if (!title.trim()) {
-    showNotification('请输入任务标题', 'error');
-    return false;
-  }
-  return true;
-};
+  const query = searchQuery.value.toLowerCase();
+  return groups.filter(g => {
+    const hasMatchingTasks = g.tasks.length > 0;
+    const isProjectMatch = g.data.title.toLowerCase().includes(query);
+    return hasMatchingTasks || isProjectMatch;
+  });
+});
 
-const validateDueDate = (dueDate, isEditing) => {
-  if (dueDate && new Date(dueDate) < new Date() && !isEditing) {
-    showNotification('截止时间无效', 'error');
-    return false;
-  }
-  return true;
-};
+// 列表视图的扁平任务
+const flatFilteredTasks = computed(() =>
+  getSortedFilteredTasks(
+    activeTasks.value,
+    searchQuery.value,
+    filterStatus.value,
+    filterCategories.value
+  )
+);
 
-const showNotification = (msg, type = 'success') => {
-  notification.value = {show: true, message: msg, type};
-  setTimeout(() => notification.value.show = false, NOTIFICATION_DURATION);
-};
+// 可选择的项目（编辑时排除已完成）
+const selectableProjectsList = computed(() =>
+  selectableProjects(editingId.value ? form.value.projectId : null)
+);
 
-// --- Core Logic ---
-
-const saveToLocalStorage = () => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks.value));
-  localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects.value));
-};
+// --- Lifecycle & Side Effects ---
 
 onMounted(() => {
-  const savedTasks = localStorage.getItem(STORAGE_KEY);
-  if (savedTasks) {
-    try {
-      const parsed = JSON.parse(savedTasks);
-      tasks.value = parsed.map(t => ({
-        ...t,
-        categories: Array.isArray(t.categories) ? t.categories : [],
-        projectId: t.projectId || null
-      }));
-    } catch (e) {
-      tasks.value = [];
-    }
-  }
-
-  const savedProjects = localStorage.getItem(STORAGE_KEY_PROJECTS);
-  if (savedProjects) {
-    try {
-      const parsed = JSON.parse(savedProjects);
-      projects.value = parsed.map(p => ({...p, status: p.status || 'not_started'}));
-    } catch (e) {
-      projects.value = [];
-    }
-  }
-
-  const thirtyDaysAgo = Date.now() - (TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-  tasks.value = tasks.value.filter(t => !t.isDeleted || (t.isDeleted && new Date(t.deletedAt).getTime() > thirtyDaysAgo));
-  projects.value = projects.value.filter(p => !p.isDeleted || (p.isDeleted && new Date(p.deletedAt).getTime() > thirtyDaysAgo));
+  const { tasks: loadedTasks, projects: loadedProjects } = loadFromLocalStorage();
+  tasks.value = loadedTasks;
+  projects.value = loadedProjects;
 });
 
-watch([tasks, projects], saveToLocalStorage, {deep: true});
+watch([tasks, projects], () => {
+  saveToLocalStorage(tasks.value, projects.value);
+}, { deep: true });
 
-const exportData = () => {
-  const data = {
-    tasks: tasks.value,
-    projects: projects.value,
-    version: '1.5-baseline-fix',
-    exportDate: new Date().toISOString()
-  };
+// --- Operations ---
 
-  const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `jos-todo-backup-${format(new Date(), 'yyyyMMdd')}.json`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-
-  showNotification('数据导出成功');
+const handleExportData = () => {
+  exportData(tasks.value, projects.value, showNotification);
 };
 
 const triggerImport = () => {
@@ -255,17 +247,12 @@ const handleImport = (event) => {
   reader.onload = (e) => {
     try {
       const parsed = JSON.parse(e.target.result);
-      if (Array.isArray(parsed.tasks) && Array.isArray(parsed.projects)) {
-        tasks.value = parsed.tasks;
-        projects.value = parsed.projects;
-        saveToLocalStorage();
-        showNotification('数据恢复成功！');
-      } else {
-        throw new Error('格式无效');
+      const success = importData(parsed, tasks, projects, showNotification);
+      if (success) {
+        // Reset forms after successful import
+        resetForm();
+        resetProjectForm();
       }
-    } catch (err) {
-      console.error(err);
-      showNotification('导入失败：文件格式错误', 'error');
     } finally {
       event.target.value = '';
     }
@@ -273,387 +260,174 @@ const handleImport = (event) => {
   reader.readAsText(file);
 };
 
-const activeTasks = computed(() => tasks.value.filter(t => !t.isDeleted));
-const activeProjects = computed(() => projects.value.filter(p => !p.isDeleted));
-const trashTasks = computed(() => tasks.value.filter(t => t.isDeleted));
-const trashProjects = computed(() => projects.value.filter(p => p.isDeleted));
-
-const completedProjectsList = computed(() => projects.value.filter(p => !p.isDeleted && p.status === 'completed'));
-
-const selectableProjects = computed(() => {
-  return activeProjects.value.filter(p => {
-    const isCompleted = p.status === 'completed';
-    const isCurrentEditingProject = editingId.value && form.value.projectId === p.id;
-    return !isCompleted || isCurrentEditingProject;
-  });
-});
-
-const stats = computed(() => {
-  const total = activeTasks.value.length;
-  const completed = activeTasks.value.filter(t => t.completed).length;
-  const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
-  return {total, completed, progress};
-});
-
-const getSortedFilteredTasks = (sourceTasks) => {
-  let result = sourceTasks;
-
-  if (searchQuery.value.trim()) {
-    const query = searchQuery.value.toLowerCase();
-    result = result.filter(t => t.title.toLowerCase().includes(query) || t.desc.toLowerCase().includes(query));
-  }
-
-  if (filterStatus.value === 'active') result = result.filter(t => !t.completed);
-  else if (filterStatus.value === 'completed') result = result.filter(t => t.completed);
-
-  if (filterCategories.value.length > 0) {
-    result = result.filter(t => t.categories && t.categories.some(c => filterCategories.value.includes(c)));
-  }
-
-  return result.sort((a, b) => {
-    if (a.completed !== b.completed) return a.completed ? 1 : -1;
-    if (!a.completed && !b.completed) {
-      const urgentA = isUrgent(a);
-      const urgentB = isUrgent(b);
-      if (urgentA !== urgentB) return urgentA ? -1 : 1;
-    }
-    const priorityMap = {high: 3, medium: 2, low: 1, none: 0};
-    if (priorityMap[a.priority] !== priorityMap[b.priority]) return priorityMap[b.priority] - priorityMap[a.priority];
-    return new Date(a.dueDate || 0) - new Date(b.dueDate || 0);
-  });
-};
-
-const flatFilteredTasks = computed(() => getSortedFilteredTasks(activeTasks.value));
-
-const groupedTasks = computed(() => {
-  const groups = [];
-  const filteredTasks = getSortedFilteredTasks(activeTasks.value);
-
-  // 1. 未归档
-  const inboxTasks = filteredTasks.filter(t => !t.projectId || t.projectId === 'none');
-  groups.push({
-    type: 'inbox',
-    data: {id: 'none', title: '📂 未归档任务', desc: '不属于任何特定项目的独立任务', status: 'active'},
-    tasks: inboxTasks,
-    progress: 0
-  });
-
-  // 2. 活跃项目
-  activeProjects.value.forEach(proj => {
-    if (proj.status === 'completed') {
-      return;
-    }
-
-    const projTasks = filteredTasks.filter(t => t.projectId === proj.id);
-    const allProjTasks = activeTasks.value.filter(t => t.projectId === proj.id);
-    const completedCount = allProjTasks.filter(t => t.completed).length;
-    const progress = allProjTasks.length === 0 ? 0 : Math.round((completedCount / allProjTasks.length) * 100);
-
-    groups.push({
-      type: 'project',
-      data: proj,
-      tasks: projTasks,
-      progress
-    });
-  });
-
-  if (!searchQuery.value.trim()) return groups;
-
-  const query = searchQuery.value.toLowerCase();
-  return groups.filter(g => {
-    const hasMatchingTasks = g.tasks.length > 0;
-    const isProjectMatch = g.data.title.toLowerCase().includes(query);
-    return hasMatchingTasks || isProjectMatch;
-  });
-});
-
+// Task form operations
 const openCreateTask = (projectId = 'none') => {
   resetForm();
   form.value.projectId = projectId;
   showTaskModal.value = true;
 };
 
-const handleSubmit = () => {
-  if (!validateTaskTitle(form.value.title)) return;
-  const finalDueDate = combineDateTime();
-  if (!validateDueDate(finalDueDate, !!editingId.value)) return;
-
-  const safeCategories = form.value.categories ? [...form.value.categories] : [];
-  const safeProjectId = form.value.projectId === 'none' ? null : form.value.projectId;
-
-  const taskData = {
-    title: form.value.title,
-    desc: form.value.desc,
-    priority: form.value.priority,
-    dueDate: finalDueDate,
-    categories: safeCategories,
-    projectId: safeProjectId
-  };
+const handleTaskSubmit = () => {
+  const finalDueDate = combineDateTime(form.value.date, form.value.time);
 
   if (editingId.value) {
-    const index = tasks.value.findIndex(t => t.id === editingId.value);
-    if (index !== -1) {
-      tasks.value[index] = {...tasks.value[index], ...taskData};
-      showNotification('任务已更新');
-    }
+    updateTask(
+      editingId.value,
+      form.value.title,
+      form.value.desc,
+      form.value.priority,
+      finalDueDate,
+      form.value.categories,
+      form.value.projectId
+    );
     editingId.value = null;
   } else {
-    tasks.value.push({
-      id: Date.now(),
-      ...taskData,
-      completed: false,
-      isDeleted: false,
-      createdAt: new Date().toISOString()
-    });
-    showNotification('任务已创建');
+    createTask(
+      form.value.title,
+      form.value.desc,
+      form.value.priority,
+      finalDueDate,
+      form.value.categories,
+      form.value.projectId
+    );
   }
 
   showTaskModal.value = false;
   resetForm();
 };
 
-const editTask = (task) => {
-  const dateObj = task.dueDate ? extractDateFromISO(task.dueDate) : undefined;
-  const timeStr = task.dueDate ? extractTimeFromISO(task.dueDate) : DEFAULT_TIME;
-
-  form.value = {
-    title: task.title,
-    desc: task.desc,
-    priority: task.priority,
-    date: dateObj,
-    time: timeStr,
-    categories: Array.isArray(task.categories) ? [...task.categories] : [],
-    projectId: task.projectId || 'none'
-  };
+const editTaskForm = (task) => {
+  const formData = prepareTaskForEdit(task);
+  form.value = formData;
   editingId.value = task.id;
   showTaskModal.value = true;
 };
 
-// --- 项目管理逻辑 (修复版) ---
-
-const saveProject = () => {
-  if (!projectForm.value.title.trim()) {
-    showNotification('请输入项目名称', 'error');
-    return;
-  }
-
-  const startStr = projectForm.value.startDate ? projectForm.value.startDate.toString() : null;
-  const endStr = projectForm.value.endDate ? projectForm.value.endDate.toString() : null;
+// Project form operations
+const handleProjectSubmit = () => {
+  const startDate = projectForm.value.startDate ? projectForm.value.startDate.toString() : null;
+  const endDate = projectForm.value.endDate ? projectForm.value.endDate.toString() : null;
 
   if (projectForm.value.id) {
-    const index = projects.value.findIndex(p => p.id === projectForm.value.id);
-    if (index !== -1) {
-      projects.value[index] = {
-        ...projects.value[index],
-        title: projectForm.value.title,
-        desc: projectForm.value.desc,
-        status: projectForm.value.status,
-        startDate: startStr,
-        endDate: endStr
-      };
-      showNotification('项目已更新');
-    }
+    updateProject(
+      projectForm.value.id,
+      projectForm.value.title,
+      projectForm.value.desc,
+      projectForm.value.status,
+      projectForm.value.startDate,
+      projectForm.value.endDate
+    );
   } else {
-    projects.value.push({
-      id: Date.now(),
-      title: projectForm.value.title,
-      desc: projectForm.value.desc,
-      status: projectForm.value.status || 'not_started',
-      startDate: startStr,
-      endDate: endStr,
-      isDeleted: false,
-      createdAt: new Date().toISOString()
-    });
-    showNotification('项目已创建');
+    createProject(
+      projectForm.value.title,
+      projectForm.value.desc,
+      projectForm.value.status,
+      projectForm.value.startDate,
+      projectForm.value.endDate
+    );
   }
 
-  projectForm.value = {id: null, title: '', desc: '', status: 'not_started', startDate: undefined, endDate: undefined};
+  resetProjectForm();
   showProjectModal.value = false;
 };
 
-const openEditProjectModal = (proj) => {
+const editProjectForm = (proj) => {
   projectForm.value = {
     id: proj.id,
     title: proj.title,
     desc: proj.desc,
     status: proj.status || 'not_started',
     startDate: proj.startDate ? parseDate(proj.startDate) : undefined,
-    endDate: proj.endDate ? parseDate(proj.endDate) : undefined,
-  };
-  showProjectModal.value = true;
-};
-
-const editProject = (proj) => {
-  projectForm.value = {
-    id: proj.id,
-    title: proj.title,
-    desc: proj.desc,
-    status: proj.status || 'not_started',
-    startDate: proj.startDate ? parseDate(proj.startDate) : undefined,
-    endDate: proj.endDate ? parseDate(proj.endDate) : undefined,
+    endDate: proj.endDate ? parseDate(proj.endDate) : undefined
   };
 };
 
-const unarchiveProject = (projId) => {
-  const index = projects.value.findIndex(p => p.id === projId);
-  if (index !== -1) {
-    projects.value[index].status = 'in_progress';
-    showNotification('项目已移回看板');
-  }
-};
-
-// 🟢 修复：软删除逻辑，支持将任务一同移入回收站
-const softDeleteProject = (id) => {
-  const hasTasks = tasks.value.some(t => t.projectId === id && !t.isDeleted);
-
+const handleDeleteProject = (projectId) => {
+  const hasTasks = getProjectTaskCount(projectId, false) > 0;
   if (hasTasks) {
-    pendingDeleteProjectId.value = id;
-    deleteActionType.value = 'soft'; // 标记为软删除模式
+    pendingDeleteProjectId.value = projectId;
+    deleteActionType.value = 'soft';
     showDeleteConfirmModal.value = true;
   } else {
-    // 无任务直接软删除
-    const proj = projects.value.find(p => p.id === id);
-    if (proj) {
-      proj.isDeleted = true;
-      proj.deletedAt = new Date().toISOString();
-      showNotification('项目已移至回收站');
-    }
+    softDeleteProject(projectId);
   }
 };
 
-const restoreProject = (id) => {
-  const proj = projects.value.find(p => p.id === id);
-  if (proj) {
-    proj.isDeleted = false;
-    proj.deletedAt = null;
-    let count = 0;
-    tasks.value.forEach(t => {
-      if (t.projectId === id && t.isDeleted) {
-        t.isDeleted = false;
-        t.deletedAt = null;
-        count++;
-      }
-    });
-    showNotification(`项目及 ${count} 个任务已恢复`);
+const handlePermanentDeleteProject = (projectId) => {
+  const hasTasks = getProjectTaskCount(projectId, false) > 0;
+  pendingDeleteProjectId.value = projectId;
+  deleteActionType.value = 'hard';
+  if (hasTasks) {
+    showDeleteConfirmModal.value = true;
+  } else {
+    confirmPermanentDeleteProject(projectId, false);
   }
 };
 
-// 🟢 修复：永久删除触发
-const initiatePermanentDeleteProject = (id) => {
-  pendingDeleteProjectId.value = id;
-  deleteActionType.value = 'hard'; // 标记为硬删除模式
-  showDeleteConfirmModal.value = true;
-};
-
-// 🟢 修复：确认删除逻辑（区分软/硬删除）
 const confirmDeleteProject = (deleteTasks) => {
   const pid = pendingDeleteProjectId.value;
   if (!pid) return;
 
   if (deleteActionType.value === 'soft') {
-    // 移至回收站模式
-    const proj = projects.value.find(p => p.id === pid);
-    if (proj) {
-      proj.isDeleted = true;
-      proj.deletedAt = new Date().toISOString();
-    }
-
-    if (deleteTasks) {
-      // 同时也把任务移到回收站
-      let count = 0;
-      tasks.value.forEach(t => {
-        if (t.projectId === pid && !t.isDeleted) {
-          t.isDeleted = true;
-          t.deletedAt = new Date().toISOString();
-          count++;
-        }
-      });
-      showNotification(`项目及 ${count} 个任务已移至回收站`);
-    } else {
-      // 任务解绑
-      tasks.value.forEach(t => {
-        if (t.projectId === pid) t.projectId = null;
-      });
-      showNotification('项目已移至回收站，关联任务已解绑');
-    }
-
+    confirmSoftDeleteProject(pid, deleteTasks);
   } else {
-    // 永久删除模式
-    if (deleteTasks) {
-      tasks.value = tasks.value.filter(t => t.projectId !== pid);
-    } else {
-      tasks.value.forEach(t => {
-        if (t.projectId === pid) t.projectId = null;
-      });
-    }
-    projects.value = projects.value.filter(p => p.id !== pid);
-    showNotification('项目已永久删除');
+    confirmPermanentDeleteProject(pid, deleteTasks);
   }
 
   showDeleteConfirmModal.value = false;
   pendingDeleteProjectId.value = null;
 };
 
+// Form field operations
 const handleCategoryChange = (cat, isChecked) => {
-  if (!Array.isArray(form.value.categories)) form.value.categories = [];
-  let newCategories = [...form.value.categories];
-  if (isChecked) {
-    if (!newCategories.includes(cat)) newCategories.push(cat);
-  } else {
-    newCategories = newCategories.filter(item => item !== cat);
+  if (!Array.isArray(form.value.categories)) {
+    form.value.categories = [];
   }
-  form.value.categories = newCategories;
+
+  if (isChecked) {
+    if (!form.value.categories.includes(cat)) {
+      form.value.categories.push(cat);
+    }
+  } else {
+    form.value.categories = form.value.categories.filter(item => item !== cat);
+  }
 };
 
 const toggleFilterCategory = (cat) => {
   const index = filterCategories.value.indexOf(cat);
-  if (index === -1) filterCategories.value.push(cat);
-  else filterCategories.value.splice(index, 1);
+  if (index === -1) {
+    filterCategories.value.push(cat);
+  } else {
+    filterCategories.value.splice(index, 1);
+  }
 };
 
 const removeFilterCategory = (cat) => {
   filterCategories.value = filterCategories.value.filter(c => c !== cat);
 };
 
-const softDelete = (id) => {
-  const task = tasks.value.find(t => t.id === id);
-  if (task) {
-    task.isDeleted = true;
-    task.deletedAt = new Date().toISOString();
-    showNotification('已移至回收站');
-  }
+// Trash operations
+const handleSoftDeleteTask = (taskId) => {
+  softDeleteTask(taskId);
 };
 
-const toggleStatus = (id) => {
-  const task = tasks.value.find(t => t.id === id);
-  if (task) task.completed = !task.completed;
+const handleRestoreTask = (taskId) => {
+  restoreTask(taskId);
 };
 
-const restoreTask = (id) => {
-  const task = tasks.value.find(t => t.id === id);
-  if (task) {
-    task.isDeleted = false;
-    task.deletedAt = null;
-    showNotification('任务已恢复');
-  }
+const handlePermanentDeleteTask = (taskId) => {
+  permanentDeleteTask(taskId);
 };
 
-const permanentDelete = (id) => {
-  tasks.value = tasks.value.filter(t => t.id !== id);
-  showNotification('任务已永久删除');
-};
-
-const emptyTrash = () => {
+const handleEmptyTrash = () => {
   if (trashViewMode.value === 'tasks') {
-    tasks.value = tasks.value.filter(t => !t.isDeleted);
+    emptyTaskTrash();
   } else {
-    const deletedProjectIds = projects.value.filter(p => p.isDeleted).map(p => p.id);
-    projects.value = projects.value.filter(p => !p.isDeleted);
-    tasks.value = tasks.value.filter(t => !(t.isDeleted && deletedProjectIds.includes(t.projectId)));
+    emptyProjectTrash();
   }
-  showNotification('回收站已清空');
 };
 
+// Form reset operations
 const resetForm = () => {
   form.value = {
     title: '',
@@ -666,6 +440,17 @@ const resetForm = () => {
   };
   editingId.value = null;
 };
+
+const resetProjectForm = () => {
+  projectForm.value = {
+    id: null,
+    title: '',
+    desc: '',
+    status: 'not_started',
+    startDate: undefined,
+    endDate: undefined
+  };
+};
 </script>
 
 <template>
@@ -676,7 +461,6 @@ const resetForm = () => {
     <header class="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur shrink-0 flex-none">
       <div class="container max-w-full px-6 flex h-14 items-center justify-between">
         <div class="flex items-center gap-2">
-          <JoLogo class="h-6 w-6 shrink-0 mr-1"/>
           <span class="font-bold text-lg tracking-tight">Jo's List</span>
         </div>
 
@@ -791,7 +575,7 @@ const resetForm = () => {
               已完成项目
             </DropdownMenuItem>
             <DropdownMenuSeparator/>
-            <DropdownMenuItem @click="exportData">
+            <DropdownMenuItem @click="handleExportData">
               <Download class="mr-2 h-4 w-4"/>
               导出备份 (JSON)
             </DropdownMenuItem>
@@ -855,19 +639,32 @@ const resetForm = () => {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem @click="openEditProjectModal(group.data)">
+                      <DropdownMenuItem @click="editProjectForm(group.data); showProjectModal = true">
                         <PenSquare class="mr-2 h-4 w-4"/>
                         编辑项目
                       </DropdownMenuItem>
                       <DropdownMenuSeparator/>
                       <DropdownMenuItem class="text-destructive focus:text-destructive"
-                                        @click="softDeleteProject(group.data.id)">
+                                        @click="handleDeleteProject(group.data.id)">
                         <Trash2 class="mr-2 h-4 w-4"/>
                         删除项目
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
+              </div>
+
+              <div v-if="group.data.desc" class="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                {{ group.data.desc }}
+              </div>
+
+              <div v-if="group.data.startDate || group.data.endDate" class="text-xs text-muted-foreground flex items-center gap-1">
+                <CalendarIcon class="h-3 w-3 opacity-70"/>
+                <span v-if="group.data.startDate && group.data.endDate">
+                  {{ formatSimpleDate(group.data.startDate) }} - {{ formatSimpleDate(group.data.endDate) }}
+                </span>
+                <span v-else-if="group.data.startDate">开始: {{ formatSimpleDate(group.data.startDate) }}</span>
+                <span v-else-if="group.data.endDate">结束: {{ formatSimpleDate(group.data.endDate) }}</span>
               </div>
 
               <div class="flex items-center gap-2 h-1.5" :class="group.progress > 0 ? 'opacity-100' : 'opacity-0'">
@@ -892,7 +689,7 @@ const resetForm = () => {
                       <AlertTriangle class="h-3 w-3"/>
                     </div>
                     <div class="flex gap-2 items-start">
-                      <button class="mt-0.5 shrink-0 focus:outline-none z-10" @click.stop="toggleStatus(task.id)">
+                      <button class="mt-0.5 shrink-0 focus:outline-none z-10" @click.stop="toggleTaskStatus(task.id)">
                         <CheckCircle2 v-if="task.completed" class="h-4 w-4 text-muted-foreground"/>
                         <Circle v-else
                                 class="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors"/>
@@ -904,6 +701,10 @@ const resetForm = () => {
                                 :class="{'line-through text-muted-foreground': task.completed}">
                             {{ task.title }}
                           </span>
+                        </div>
+
+                        <div v-if="task.desc" class="text-xs text-muted-foreground line-clamp-2 leading-relaxed pt-1">
+                          {{ task.desc }}
                         </div>
 
                         <div v-if="task.categories.length || task.priority !== 'none'" class="flex flex-wrap gap-1">
@@ -924,12 +725,12 @@ const resetForm = () => {
 
                           <div class="flex gap-1 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button variant="ghost" size="icon" class="h-6 w-6 hover:bg-muted text-muted-foreground"
-                                    @click.stop="editTask(task)" title="编辑">
+                                    @click.stop="editTaskForm(task)" title="编辑">
                               <PenSquare class="h-3.5 w-3.5"/>
                             </Button>
                             <Button variant="ghost" size="icon"
                                     class="h-6 w-6 hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                                    @click.stop="softDelete(task.id)" title="删除">
+                                    @click.stop="handleSoftDeleteTask(task.id)" title="删除">
                               <Trash2 class="h-3.5 w-3.5"/>
                             </Button>
                           </div>
@@ -961,7 +762,7 @@ const resetForm = () => {
                   task.completed ? 'opacity-50 bg-muted/20 border-dashed shadow-none' : 'bg-card',
                   isUrgent(task) ? 'border-amber-500/30 bg-amber-50/5' : ''
                 ]"
-                    @click="editTask(task)"
+                    @click="editTaskForm(task)"
               >
                 <CardContent class="p-4 flex flex-col gap-2">
 
@@ -969,7 +770,7 @@ const resetForm = () => {
                     <div class="flex items-start gap-3 flex-1 min-w-0">
                       <button
                           class="mt-0.5 shrink-0 focus:outline-none text-muted-foreground hover:text-primary transition-colors"
-                          @click.stop="toggleStatus(task.id)">
+                          @click.stop="toggleTaskStatus(task.id)">
                         <CheckCircle2 v-if="task.completed" class="h-5 w-5"/>
                         <Circle v-else class="h-5 w-5"/>
                       </button>
@@ -1022,11 +823,11 @@ const resetForm = () => {
 
                     <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
                       <Button variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:text-foreground"
-                              @click.stop="editTask(task)">
+                              @click.stop="editTaskForm(task)">
                         <PenSquare class="h-3.5 w-3.5"/>
                       </Button>
                       <Button variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:text-destructive"
-                              @click.stop="softDelete(task.id)">
+                              @click.stop="handleSoftDeleteTask(task.id)">
                         <Trash2 class="h-3.5 w-3.5"/>
                       </Button>
                     </div>
@@ -1106,11 +907,11 @@ const resetForm = () => {
               <span class="text-xs text-muted-foreground line-clamp-1">{{ p.desc || '无描述' }}</span>
             </div>
             <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button size="icon" variant="ghost" class="h-7 w-7" @click="editProject(p)">
+              <Button size="icon" variant="ghost" class="h-7 w-7" @click="editProjectForm(p); showProjectModal = true">
                 <PenSquare class="h-3.5 w-3.5"/>
               </Button>
               <Button size="icon" variant="ghost" class="h-7 w-7 text-destructive hover:bg-destructive/10"
-                      @click="softDeleteProject(p.id)">
+                      @click="handleDeleteProject(p.id)">
                 <Trash2 class="h-3.5 w-3.5"/>
               </Button>
             </div>
@@ -1152,10 +953,10 @@ const resetForm = () => {
         </div>
         <DialogFooter>
           <Button v-if="projectForm.id" variant="ghost" size="sm"
-                  @click="projectForm = { id: null, title: '', desc: '', status: 'not_started', startDate: undefined, endDate: undefined }">
+                  @click="resetProjectForm">
             取消
           </Button>
-          <Button size="sm" @click="saveProject">{{ projectForm.id ? '更新' : '创建' }}</Button>
+          <Button size="sm" @click="handleProjectSubmit">{{ projectForm.id ? '更新' : '创建' }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1185,7 +986,7 @@ const resetForm = () => {
                 <SelectTrigger><SelectValue placeholder="选择项目" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none"><span class="text-muted-foreground">🚫 未归档</span></SelectItem>
-                  <SelectItem v-for="p in selectableProjects" :key="p.id" :value="p.id">📁 {{ p.title }}</SelectItem>
+                  <SelectItem v-for="p in selectableProjectsList" :key="p.id" :value="p.id">📁 {{ p.title }}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1248,7 +1049,7 @@ const resetForm = () => {
 
         <DialogFooter>
           <Button variant="outline" @click="showTaskModal = false">取消</Button>
-          <Button @click="handleSubmit">{{ editingId ? '保存' : '创建' }}</Button>
+          <Button @click="handleTaskSubmit">{{ editingId ? '保存' : '创建' }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1276,9 +1077,9 @@ const resetForm = () => {
                  class="flex items-center justify-between p-3 border rounded-lg bg-muted/20"><span
                 class="text-sm line-through text-muted-foreground truncate max-w-[200px]">{{ task.title }}</span>
               <div class="flex gap-2">
-                <Button size="sm" variant="outline" class="h-7 text-xs" @click="restoreTask(task.id)">恢复</Button>
+                <Button size="sm" variant="outline" class="h-7 text-xs" @click="handleRestoreTask(task.id)">恢复</Button>
                 <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10"
-                        @click="permanentDelete(task.id)">删除
+                        @click="handlePermanentDeleteTask(task.id)">删除
                 </Button>
               </div>
             </div>
@@ -1294,7 +1095,7 @@ const resetForm = () => {
               <div class="flex gap-2">
                 <Button size="sm" variant="outline" class="h-7 text-xs" @click="restoreProject(proj.id)">恢复</Button>
                 <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10"
-                        @click="initiatePermanentDeleteProject(proj.id)">删除
+                        @click="handlePermanentDeleteProject(proj.id)">删除
                 </Button>
               </div>
             </div>
@@ -1303,7 +1104,7 @@ const resetForm = () => {
         <DialogFooter class="sm:justify-between flex-row items-center pt-2"><span class="text-xs text-muted-foreground">30天自动清理</span>
           <Button
               v-if="(trashViewMode === 'tasks' && trashTasks.length) || (trashViewMode === 'projects' && trashProjects.length)"
-              variant="destructive" size="sm" class="h-8 text-xs" @click="emptyTrash">清空
+              variant="destructive" size="sm" class="h-8 text-xs" @click="handleEmptyTrash">清空
           </Button>
         </DialogFooter>
       </DialogContent>
