@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed, watch } from 'vue';
-import { Calendar as CalendarIcon, Clock, Eraser } from 'lucide-vue-next';
+import { ref, computed } from 'vue';
+import { Calendar as CalendarIcon, Eraser } from 'lucide-vue-next';
 import { format } from 'date-fns';
 import { today, getLocalTimeZone, CalendarDate, parseDate } from '@internationalized/date';
 
@@ -19,7 +19,6 @@ const emit = defineEmits(['update:modelValue']);
 
 const calendarPlaceholder = ref(today(getLocalTimeZone()));
 
-// 生成年份选项 (当前年份 前5后10)
 const years = computed(() => {
   const currentYear = today(getLocalTimeZone()).year;
   const range = [];
@@ -71,9 +70,7 @@ const handleOpenChange = (isOpen) => {
   if (isOpen) {
     if (props.modelValue) {
       try {
-        // 尝试解析传入的日期以定位视图
         const valStr = props.modelValue.toString();
-        // 简单判断是 ISO 字符串还是 CalendarDate 对象
         if (valStr.includes('T') || valStr.includes('-')) {
           calendarPlaceholder.value = parseDate(valStr.split('T')[0]);
         } else {
@@ -92,13 +89,13 @@ const handleOpenChange = (isOpen) => {
 <template>
   <Popover @update:open="handleOpenChange">
     <PopoverTrigger as-child>
-      <Button variant="outline" class="w-full justify-start text-left font-normal h-10" :class="!modelValue ? 'text-muted-foreground' : ''">
-        <CalendarIcon class="mr-2 h-4 w-4 shrink-0" />
+      <Button variant="outline" class="w-full justify-start text-left font-normal h-9 text-sm border-input hover:bg-accent hover:text-accent-foreground" :class="!modelValue ? 'text-muted-foreground' : ''">
+        <CalendarIcon class="mr-2 h-4 w-4 shrink-0 opacity-70" />
         <span v-if="modelValue" class="truncate">{{ displayDate }}</span>
         <span v-else>{{ placeholderText }}</span>
       </Button>
     </PopoverTrigger>
-    <PopoverContent class="w-auto p-3" align="start" side="top">
+    <PopoverContent class="w-auto p-3 bg-popover border-border shadow-md rounded-md" align="start" side="top">
       <div class="flex gap-2 mb-2 justify-between">
         <Select :model-value="calendarPlaceholder.year.toString()" @update:model-value="(v) => updateCalendarView('year', Number(v))">
           <SelectTrigger class="h-8 w-[90px] text-xs"><SelectValue /></SelectTrigger>
@@ -127,7 +124,7 @@ const handleOpenChange = (isOpen) => {
           v-model:placeholder="calendarPlaceholder"
           mode="single"
           initial-focus
-          class="min-h-[300px]"
+          class="min-h-[300px] border-t pt-2"
       />
     </PopoverContent>
   </Popover>
