@@ -5,7 +5,7 @@ import {
   LayoutDashboard, PenSquare, Clock, AlertTriangle, AlertCircle, PieChart,
   ListFilter, X, Check, Filter, FolderPlus, Folder, LayoutList, Grip,
   ArchiveRestore, FolderOpen, Kanban, Settings2, MoreHorizontal, Eraser,
-  Download, Upload, FileJson, HardDrive, Eye, EyeOff
+  Download, Upload, FileJson, HardDrive, Eye, EyeOff, Archive, MoreVertical, RotateCcw, AlertOctagon
 } from 'lucide-vue-next';
 import { format, differenceInDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -68,6 +68,8 @@ const editingId = ref(null);
 const showTrashModal = ref(false);
 const showProjectModal = ref(false);
 const showTaskModal = ref(false);
+const showCompletedModal = ref(false);
+const showDeleteConfirmModal = ref(false);
 
 const trashViewMode = ref('tasks');
 
@@ -96,11 +98,11 @@ const searchQuery = ref('');
 const filterStatus = ref('all');
 const filterCategories = ref([]);
 const viewMode = ref('project');
-// 🟢 新增：是否显示已完成项目
 const showCompletedProjects = ref(false);
 
 const notification = ref({ show: false, message: '', type: 'success' });
 const fileInput = ref(null);
+const pendingDeleteProjectId = ref(null);
 
 // --- 工具函数 ---
 
@@ -211,7 +213,7 @@ const exportData = () => {
   const data = {
     tasks: tasks.value,
     projects: projects.value,
-    version: '1.1',
+    version: '1.4', // Baseline
     exportDate: new Date().toISOString()
   };
 
@@ -252,7 +254,7 @@ const handleImport = (event) => {
       console.error(err);
       showNotification('导入失败：文件格式错误', 'error');
     } finally {
-      event.target.value = ''; // 重置 input
+      event.target.value = '';
     }
   };
   reader.readAsText(file);
@@ -262,6 +264,16 @@ const activeTasks = computed(() => tasks.value.filter(t => !t.isDeleted));
 const activeProjects = computed(() => projects.value.filter(p => !p.isDeleted));
 const trashTasks = computed(() => tasks.value.filter(t => t.isDeleted));
 const trashProjects = computed(() => projects.value.filter(p => p.isDeleted));
+
+const completedProjectsList = computed(() => projects.value.filter(p => !p.isDeleted && p.status === 'completed'));
+
+const selectableProjects = computed(() => {
+  return activeProjects.value.filter(p => {
+    const isCompleted = p.status === 'completed';
+    const isCurrentEditingProject = editingId.value && form.value.projectId === p.id;
+    return !isCompleted || isCurrentEditingProject;
+  });
+});
 
 const stats = computed(() => {
   const total = activeTasks.value.length;
@@ -304,7 +316,7 @@ const groupedTasks = computed(() => {
   const groups = [];
   const filteredTasks = getSortedFilteredTasks(activeTasks.value);
 
-  // 1. 未归档任务
+  // 1. 未归档
   const inboxTasks = filteredTasks.filter(t => !t.projectId || t.projectId === 'none');
   groups.push({
     type: 'inbox',
@@ -315,8 +327,7 @@ const groupedTasks = computed(() => {
 
   // 2. 活跃项目
   activeProjects.value.forEach(proj => {
-    // 🟢 归档过滤：如果不显示已完成项目，且当前项目是已完成，则跳过
-    if (!showCompletedProjects.value && proj.status === 'completed') {
+    if (proj.status === 'completed') {
       return;
     }
 
@@ -333,8 +344,6 @@ const groupedTasks = computed(() => {
     });
   });
 
-  // 排序：为了让未归档任务始终在前面，我们不需要额外sort，因为push顺序已经决定了
-  // 如果搜索，应用搜索逻辑
   if (!searchQuery.value.trim()) return groups;
 
   const query = searchQuery.value.toLowerCase();
@@ -344,8 +353,6 @@ const groupedTasks = computed(() => {
     return hasMatchingTasks || isProjectMatch;
   });
 });
-
-// --- 任务表单逻辑 ---
 
 const openCreateTask = (projectId = 'none') => {
   resetForm();
@@ -474,12 +481,19 @@ const editProject = (proj) => {
   };
 };
 
+const unarchiveProject = (projId) => {
+  const index = projects.value.findIndex(p => p.id === projId);
+  if (index !== -1) {
+    projects.value[index].status = 'in_progress';
+    showNotification('项目已移回看板');
+  }
+};
+
 const softDeleteProject = (id) => {
   const proj = projects.value.find(p => p.id === id);
   if (proj) {
     proj.isDeleted = true;
     proj.deletedAt = new Date().toISOString();
-
     let count = 0;
     tasks.value.forEach(t => {
       if (t.projectId === id && !t.isDeleted) {
@@ -497,7 +511,6 @@ const restoreProject = (id) => {
   if (proj) {
     proj.isDeleted = false;
     proj.deletedAt = null;
-
     let count = 0;
     tasks.value.forEach(t => {
       if (t.projectId === id && t.isDeleted) {
@@ -510,15 +523,31 @@ const restoreProject = (id) => {
   }
 };
 
-const permanentDeleteProject = (id) => {
-  projects.value = projects.value.filter(p => p.id !== id);
-  tasks.value.forEach(t => {
-    if (t.projectId === id) t.projectId = null;
-  });
-  showNotification('项目已永久删除');
+const initiatePermanentDeleteProject = (id) => {
+  pendingDeleteProjectId.value = id;
+  const hasTasks = tasks.value.some(t => t.projectId === id);
+  if (hasTasks) {
+    showDeleteConfirmModal.value = true;
+  } else {
+    confirmDeleteProject(false);
+  }
 };
 
-// --- 其他逻辑 ---
+const confirmDeleteProject = (deleteTasks) => {
+  const pid = pendingDeleteProjectId.value;
+  if (!pid) return;
+
+  if (deleteTasks) {
+    tasks.value = tasks.value.filter(t => t.projectId !== pid);
+  } else {
+    tasks.value.forEach(t => { if (t.projectId === pid) t.projectId = null; });
+  }
+  projects.value = projects.value.filter(p => p.id !== pid);
+
+  showDeleteConfirmModal.value = false;
+  pendingDeleteProjectId.value = null;
+  showNotification('项目已永久删除');
+};
 
 const handleCategoryChange = (cat, isChecked) => {
   if (!Array.isArray(form.value.categories)) form.value.categories = [];
@@ -587,11 +616,11 @@ const resetForm = () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-background text-foreground font-sans selection:bg-primary selection:text-primary-foreground flex flex-col">
+  <div class="h-screen w-full overflow-hidden bg-background text-foreground font-sans selection:bg-primary selection:text-primary-foreground flex flex-col">
 
     <input type="file" ref="fileInput" class="hidden" accept=".json" @change="handleImport" />
 
-    <header class="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md shrink-0">
+    <header class="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur-md shrink-0 flex-none">
       <div class="container max-w-full px-6 flex h-16 items-center justify-between">
         <div class="flex items-center gap-3">
           <JoLogo class="h-8 w-8 sm:h-9 sm:w-9 shrink-0 mr-1" />
@@ -613,9 +642,10 @@ const resetForm = () => {
       </div>
     </header>
 
-    <main class="flex-1 flex flex-col overflow-hidden">
+    <main class="flex-1 flex flex-col overflow-hidden min-h-0">
 
-      <div class="container max-w-full px-6 py-4 flex flex-col sm:flex-row gap-3 items-center border-b bg-background/50 shrink-0">
+      <div class="container max-w-full px-6 py-4 flex flex-col sm:flex-row gap-3 items-center border-b bg-background/50 shrink-0 flex-none">
+
         <div class="relative w-full sm:w-[300px]">
           <Search class="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input v-model="searchQuery" placeholder="搜索任务或项目..." class="pl-9 bg-background focus-visible:ring-1 h-9" />
@@ -629,37 +659,6 @@ const resetForm = () => {
             <LayoutList class="h-3.5 w-3.5" /> 清单
           </Button>
         </div>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
-            <Button variant="outline" size="sm" class="h-9 gap-2 border-dashed">
-              <HardDrive class="h-3.5 w-3.5 text-muted-foreground" />
-              数据备份
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem @click="exportData">
-              <Download class="mr-2 h-3.5 w-3.5" /> 导出备份 (JSON)
-            </DropdownMenuItem>
-            <DropdownMenuItem @click="triggerImport">
-              <Upload class="mr-2 h-3.5 w-3.5" /> 恢复数据 (Import)
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Button variant="outline" size="sm" class="h-9 gap-2 border-dashed" @click="showProjectModal = true">
-          <Settings2 class="h-3.5 w-3.5 text-muted-foreground" />
-          项目管理
-        </Button>
-
-        <Button variant="ghost" size="sm" class="h-9 gap-2 text-xs"
-          :class="showCompletedProjects ? 'text-primary bg-primary/10' : 'text-muted-foreground'"
-          @click="showCompletedProjects = !showCompletedProjects">
-          <component :is="showCompletedProjects ? Eye : EyeOff" class="h-3.5 w-3.5" />
-          {{ showCompletedProjects ? '隐藏已完成' : '显示已完成' }}
-        </Button>
-
-        <div class="flex-1"></div>
 
         <Popover>
           <PopoverTrigger as-child>
@@ -698,15 +697,45 @@ const resetForm = () => {
 
         <div class="flex border rounded-md p-1 bg-muted/30 h-9 items-center shrink-0">
           <Button v-for="s in ['all', 'active', 'completed']" :key="s"
-            variant="ghost" size="sm" class="h-7 px-3 text-xs"
-            :class="filterStatus === s ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'"
-            @click="filterStatus = s">
+                  variant="ghost" size="sm" class="h-7 px-3 text-xs"
+                  :class="filterStatus === s ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'"
+                  @click="filterStatus = s">
             {{ s === 'all' ? '全部' : (s === 'active' ? '待办' : '完成') }}
           </Button>
         </div>
+
+        <div class="flex-1"></div>
+
+        <Button variant="outline" size="sm" class="h-9 gap-2 border-dashed" @click="showProjectModal = true">
+          <Settings2 class="h-3.5 w-3.5 text-muted-foreground" />
+          项目管理
+        </Button>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger as-child>
+            <Button variant="ghost" size="icon" class="h-9 w-9">
+              <MoreVertical class="h-4 w-4 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>数据与归档</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="showCompletedModal = true">
+              <Archive class="mr-2 h-3.5 w-3.5" /> 已完成项目
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="exportData">
+              <Download class="mr-2 h-3.5 w-3.5" /> 导出备份 (JSON)
+            </DropdownMenuItem>
+            <DropdownMenuItem @click="triggerImport">
+              <Upload class="mr-2 h-3.5 w-3.5" /> 恢复数据 (Import)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
       </div>
 
-      <div v-if="filterCategories.length > 0" class="container max-w-full px-6 py-2 flex flex-wrap gap-2 items-center bg-background/30 shrink-0 border-b">
+      <div v-if="filterCategories.length > 0" class="container max-w-full px-6 py-2 flex flex-wrap gap-2 items-center bg-background/30 shrink-0 border-b flex-none">
         <span class="text-xs text-muted-foreground font-medium">筛选:</span>
         <Badge v-for="cat in filterCategories" :key="cat" variant="secondary" class="h-6 px-2 text-xs font-normal border-primary/20 bg-background hover:bg-muted cursor-pointer flex items-center gap-1" @click="removeFilterCategory(cat)">
           {{ cat }} <X class="h-3 w-3 text-muted-foreground hover:text-foreground" />
@@ -714,14 +743,12 @@ const resetForm = () => {
         <Button variant="ghost" size="sm" class="h-6 px-2 text-xs text-muted-foreground hover:text-foreground" @click="filterCategories = []">清除</Button>
       </div>
 
-      <div class="flex-1 flex flex-col overflow-hidden bg-muted/10 relative">
+      <div class="flex-1 flex flex-col overflow-hidden bg-muted/10 relative min-h-0">
 
         <div v-if="viewMode === 'project'" class="flex-1 w-full h-full overflow-x-auto flex gap-6 p-6 items-start custom-scroll">
           <div v-for="group in groupedTasks" :key="group.data.id"
-            class="w-[320px] shrink-0 flex flex-col max-h-full bg-background/50 rounded-xl border shadow-sm transition-opacity duration-300 min-h-0"
-            :class="group.data.status === 'completed' ? 'bg-muted/30 border-dashed opacity-80' : ''"
+               class="w-[320px] shrink-0 flex flex-col max-h-full bg-background/50 rounded-xl border shadow-sm min-h-0"
           >
-
             <div class="p-3 border-b flex flex-col gap-2 shrink-0 bg-background/80 rounded-t-xl backdrop-blur-sm z-10">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
@@ -736,7 +763,7 @@ const resetForm = () => {
                 </div>
 
                 <div class="flex items-center gap-1">
-                  <Button variant="ghost" size="icon" class="h-6 w-6" @click="openCreateTask(group.data.id)">
+                  <Button v-if="group.data.status !== 'completed'" variant="ghost" size="icon" class="h-6 w-6" @click="openCreateTask(group.data.id)">
                     <Plus class="h-4 w-4" />
                   </Button>
 
@@ -751,7 +778,7 @@ const resetForm = () => {
                         <PenSquare class="mr-2 h-3.5 w-3.5" /> 编辑项目
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem class="text-destructive focus:text-destructive" @click="softDeleteProject(group.data.id)">
+                      <DropdownMenuItem class="text-destructive focus:text-destructive" @click="initiatePermanentDeleteProject(group.data.id)">
                         <Trash2 class="mr-2 h-3.5 w-3.5" /> 删除项目
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -774,19 +801,18 @@ const resetForm = () => {
               </div>
             </div>
 
-            <div class="p-2 flex-1 overflow-y-auto min-h-[100px] space-y-2 custom-scroll">
+            <div class="p-2 flex-1 overflow-y-auto min-h-0 space-y-2 custom-scroll">
               <TransitionGroup name="list">
                 <Card v-for="task in group.tasks" :key="task.id"
-                  class="group transition-all duration-200 border-border/60 hover:border-primary/30 hover:shadow-md cursor-pointer"
-                  :class="[
+                      class="group transition-all duration-200 border-border/60 hover:border-primary/30 hover:shadow-md cursor-pointer"
+                      :class="[
                     task.completed ? 'opacity-50 bg-muted/20 border-transparent shadow-none' : 'bg-card',
                     isUrgent(task) ? 'border-amber-500/50 bg-amber-50/10 shadow-sm animate-shake' : ''
                   ]"
-                  @click="editTask(task)"
+                      @click="editTask(task)"
                 >
                   <CardContent class="p-3 relative">
                     <div v-if="isUrgent(task)" class="absolute top-2 right-2 text-amber-500"><AlertTriangle class="h-3 w-3" /></div>
-
                     <div class="flex gap-2 items-start">
                       <button class="mt-0.5 shrink-0 focus:outline-none z-10" @click.stop="toggleStatus(task.id)">
                         <CheckCircle2 v-if="task.completed" class="h-4 w-4 text-muted-foreground" />
@@ -825,7 +851,7 @@ const resetForm = () => {
                 </Card>
               </TransitionGroup>
 
-              <Button variant="ghost" class="w-full text-xs text-muted-foreground border border-dashed border-border/50 hover:bg-muted/50 h-9" @click="openCreateTask(group.data.id)">
+              <Button v-if="group.data.status !== 'completed'" variant="ghost" class="w-full text-xs text-muted-foreground border border-dashed border-border/50 hover:bg-muted/50 h-9" @click="openCreateTask(group.data.id)">
                 <Plus class="h-3 w-3 mr-1" /> 添加任务
               </Button>
             </div>
@@ -838,50 +864,66 @@ const resetForm = () => {
           <div class="container max-w-4xl mx-auto p-6 space-y-3">
             <TransitionGroup name="list">
               <Card v-for="task in flatFilteredTasks" :key="task.id"
-                class="group transition-all duration-200 hover:shadow-md cursor-pointer"
-                :class="[
-                  task.completed ? 'opacity-50 bg-muted/20 border-transparent shadow-none' : 'bg-card',
-                  isUrgent(task) ? 'border-amber-500/50 bg-amber-50/10 shadow-sm animate-shake' : 'hover:border-foreground/20'
+                    class="group transition-all duration-200 hover:shadow-md cursor-pointer border-l-4"
+                    :class="[
+                  task.completed ? 'opacity-60 border-l-muted bg-muted/20 shadow-none' : 'bg-card border-l-transparent',
+                  isUrgent(task) ? 'border-l-amber-500 bg-amber-50/10' : ''
                 ]"
-                @click="editTask(task)"
+                    @click="editTask(task)"
               >
-                <CardContent class="p-4 flex gap-4 items-center relative">
-                  <div v-if="isUrgent(task)" class="absolute top-2 right-2 text-amber-500"><AlertTriangle class="h-3 w-3" /></div>
+                <CardContent class="p-4 flex flex-col gap-2.5">
 
-                  <button class="shrink-0 focus:outline-none z-10" @click.stop="toggleStatus(task.id)">
-                    <CheckCircle2 v-if="task.completed" class="h-5 w-5 text-muted-foreground" />
-                    <Circle v-else class="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                  </button>
-
-                  <div class="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
-                    <div class="md:col-span-2 space-y-1">
-                      <div class="flex items-center gap-2">
-                        <span class="font-medium text-sm sm:text-base break-all" :class="{'line-through text-muted-foreground': task.completed}">
-                          {{ task.title }}
-                        </span>
-                        <Badge v-if="task.priority !== 'none'" variant="outline" class="shrink-0 text-[10px] px-1.5 py-0 h-5" :class="getPriorityStyles(task.priority)">{{ task.priority }}</Badge>
-                      </div>
-                      <p v-if="task.desc" class="text-xs text-muted-foreground line-clamp-1">{{ task.desc }}</p>
-                    </div>
-
-                    <div class="flex items-center gap-2 text-xs md:justify-center">
-                      <Badge v-if="task.projectId && activeProjects.find(p => p.id === task.projectId)" variant="secondary" class="font-normal bg-muted">
-                        📁 {{ activeProjects.find(p => p.id === task.projectId).title }}
-                      </Badge>
-                      <div v-if="task.categories.length" class="flex flex-wrap gap-1">
-                        <span v-for="cat in task.categories" :key="cat" class="text-muted-foreground bg-muted/50 px-1.5 rounded-sm">#{{ cat }}</span>
+                  <div class="flex items-start justify-between gap-4">
+                    <div class="flex items-start gap-3 flex-1">
+                      <button class="mt-1 shrink-0 focus:outline-none text-muted-foreground hover:text-primary transition-colors" @click.stop="toggleStatus(task.id)">
+                        <CheckCircle2 v-if="task.completed" class="h-5 w-5" />
+                        <Circle v-else class="h-5 w-5" />
+                      </button>
+                      <div class="flex flex-col">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-semibold text-base leading-tight decoration-2 underline-offset-4" :class="{'line-through text-muted-foreground': task.completed}">
+                              {{ task.title }}
+                            </span>
+                          <Badge v-if="task.priority !== 'none'" variant="outline" class="text-[10px] px-1.5 h-5 font-medium border" :class="getPriorityStyles(task.priority)">
+                            {{ task.priority }}
+                          </Badge>
+                        </div>
                       </div>
                     </div>
 
-                    <div class="flex items-center justify-end gap-3">
-                      <span v-if="task.dueDate" class="flex items-center gap-1 text-xs text-muted-foreground font-mono">
-                        <CalendarIcon class="h-3 w-3 opacity-70" /> {{ formatDate(task.dueDate) }}
-                      </span>
-                      <Button variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-destructive z-10" @click.stop="softDelete(task.id)">
-                        <Trash2 class="h-4 w-4" />
-                      </Button>
+                    <div class="flex items-center gap-2 shrink-0">
+                      <div v-if="isUrgent(task)" class="flex items-center text-amber-600 text-xs font-medium bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+                        <AlertTriangle class="h-3 w-3 mr-1" /> 紧急
+                      </div>
+                      <span v-if="task.dueDate" class="flex items-center text-xs text-muted-foreground font-mono bg-muted/50 px-2 py-1 rounded-md border border-transparent group-hover:border-border transition-colors">
+                          <CalendarIcon class="h-3 w-3 mr-1.5 opacity-70" /> {{ formatDate(task.dueDate) }}
+                       </span>
                     </div>
                   </div>
+
+                  <div v-if="task.desc" class="pl-8">
+                    <p class="text-sm text-muted-foreground/80 line-clamp-2 leading-relaxed">{{ task.desc }}</p>
+                  </div>
+
+                  <div class="flex items-center justify-between pl-8 mt-1">
+                    <div class="flex items-center gap-3 flex-wrap overflow-hidden">
+                      <Badge v-if="task.projectId && activeProjects.find(p => p.id === task.projectId)" variant="secondary" class="h-6 px-2 font-normal bg-primary/10 text-primary hover:bg-primary/20 transition-colors shrink-0">
+                        <Folder class="h-3 w-3 mr-1.5" />
+                        {{ activeProjects.find(p => p.id === task.projectId).title }}
+                      </Badge>
+                      <div v-if="task.categories.length" class="flex flex-wrap gap-1.5">
+                           <span v-for="cat in task.categories" :key="cat" class="text-xs text-muted-foreground px-1.5 py-0.5 rounded-sm bg-muted border border-transparent hover:border-border transition-colors whitespace-nowrap">
+                             #{{ cat }}
+                           </span>
+                      </div>
+                    </div>
+
+                    <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+                      <Button variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-foreground" @click.stop="editTask(task)"><PenSquare class="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" class="h-8 w-8 text-muted-foreground hover:text-destructive" @click.stop="softDelete(task.id)"><Trash2 class="h-4 w-4" /></Button>
+                    </div>
+                  </div>
+
                 </CardContent>
               </Card>
             </TransitionGroup>
@@ -897,90 +939,37 @@ const resetForm = () => {
       </div>
     </main>
 
-    <Dialog v-model:open="showTaskModal">
-      <DialogContent class="sm:max-w-[500px]">
+    <Dialog v-model:open="showCompletedModal">
+      <DialogContent class="sm:max-w-[600px]">
         <DialogHeader>
-          <DialogTitle>{{ editingId ? '编辑任务' : '新建任务' }}</DialogTitle>
+          <DialogTitle>已完成项目</DialogTitle>
+          <DialogDescription class="text-muted-foreground/70">这里展示所有状态为“已完成”的项目。</DialogDescription>
         </DialogHeader>
 
-        <div class="space-y-4 py-2">
-          <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">任务内容</Label>
-            <Input v-model="form.title" placeholder="要做什么？" />
-          </div>
-
-          <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">备注</Label>
-            <Textarea v-model="form.desc" placeholder="细节..." class="resize-none" rows="3" />
-          </div>
-
-          <div class="grid grid-cols-2 gap-4">
-            <div class="space-y-2">
-              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">所属项目</Label>
-              <Select v-model="form.projectId">
-                <SelectTrigger>
-                  <SelectValue placeholder="选择项目" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">
-                    <span class="text-muted-foreground">🚫 未归档 (独立任务)</span>
-                  </SelectItem>
-                  <SelectItem v-for="p in activeProjects" :key="p.id" :value="p.id">
-                    📁 {{ p.title }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+        <div class="space-y-4 my-4 max-h-[300px] overflow-y-auto pr-2 custom-scroll">
+          <div v-if="completedProjectsList.length === 0" class="text-center py-8 text-sm text-muted-foreground">没有已完成的项目</div>
+          <div v-for="proj in completedProjectsList" :key="proj.id" class="flex items-center justify-between p-3 border rounded-md bg-muted/10">
+            <div class="flex flex-col gap-1">
+              <span class="font-medium text-sm flex items-center gap-2">
+                <Folder class="h-4 w-4 text-primary" /> {{ proj.title }}
+                <Badge variant="outline" class="text-[9px] px-1 h-4 font-normal bg-green-50 text-green-600 border-green-200">已完成</Badge>
+              </span>
+              <span class="text-[10px] text-muted-foreground font-mono">
+                {{ proj.startDate ? formatSimpleDate(proj.startDate) : '...' }} -> {{ proj.endDate ? formatSimpleDate(proj.endDate) : '...' }}
+              </span>
             </div>
-
-            <div class="space-y-2">
-              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">优先级</Label>
-              <Select v-model="form.priority">
-                <SelectTrigger>
-                  <SelectValue placeholder="选择" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="high">🔴 高 (High)</SelectItem>
-                  <SelectItem value="medium">🟠 中 (Medium)</SelectItem>
-                  <SelectItem value="low">🔵 低 (Low)</SelectItem>
-                  <SelectItem value="none">⚪ 无</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">截止时间</Label>
             <div class="flex gap-2">
-                <div class="flex-1">
-                    <EnhancedDatePicker v-model="form.date" />
-                </div>
-                <div class="w-[100px] flex items-center bg-muted/30 px-2 rounded-md border border-dashed">
-                    <Clock class="h-4 w-4 text-muted-foreground mr-1" />
-                    <input type="time" v-model="form.time" class="w-full bg-transparent text-sm focus:outline-none font-mono cursor-pointer" />
-                </div>
-            </div>
-          </div>
-
-          <div class="space-y-3">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">类别 (多选)</Label>
-            <div class="grid grid-cols-2 gap-3">
-              <div v-for="cat in CATEGORY_OPTIONS" :key="cat" class="flex items-center space-x-2">
-                <Checkbox
-                  :id="`category-${cat}`"
-                  :model-value="form.categories.includes(cat)"
-                  @update:model-value="(val) => handleCategoryChange(cat, val)"
-                />
-                <label :for="`category-${cat}`" class="text-sm font-medium leading-none cursor-pointer text-muted-foreground hover:text-foreground select-none">
-                  {{ cat }}
-                </label>
-              </div>
+              <Button size="sm" variant="outline" class="h-7 text-xs" @click="unarchiveProject(proj.id)">
+                <RotateCcw class="mr-1 h-3 w-3" /> 撤销完成
+              </Button>
+              <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10" @click="softDeleteProject(proj.id)">
+                <Trash2 class="h-3.5 w-3.5" /> 删除
+              </Button>
             </div>
           </div>
         </div>
-
         <DialogFooter>
-          <Button variant="outline" @click="showTaskModal = false">取消</Button>
-          <Button @click="handleSubmit">{{ editingId ? '保存更改' : '创建任务' }}</Button>
+          <Button variant="secondary" @click="showCompletedModal = false">关闭</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -989,7 +978,7 @@ const resetForm = () => {
       <DialogContent class="sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>项目管理</DialogTitle>
-          <DialogDescription>创建或编辑项目。删除项目将同时删除其下的所有任务。</DialogDescription>
+          <DialogDescription class="text-muted-foreground/70">创建或编辑项目。删除项目将同时删除其下的所有任务。</DialogDescription>
         </DialogHeader>
 
         <div class="space-y-4 my-4 max-h-[300px] overflow-y-auto pr-2 custom-scroll" v-if="activeProjects.length > 0">
@@ -1029,7 +1018,6 @@ const resetForm = () => {
               <Label class="text-right text-xs">描述</Label>
               <Input v-model="projectForm.desc" class="col-span-3 h-8" placeholder="简短描述..." />
             </div>
-
             <div class="grid grid-cols-4 items-center gap-4">
               <Label class="text-right text-xs">状态</Label>
               <Select v-model="projectForm.status">
@@ -1046,7 +1034,6 @@ const resetForm = () => {
                 </SelectContent>
               </Select>
             </div>
-
             <div class="grid grid-cols-4 items-center gap-4">
               <Label class="text-right text-xs">起止时间</Label>
               <div class="col-span-3 flex gap-2">
@@ -1065,16 +1052,105 @@ const resetForm = () => {
       </DialogContent>
     </Dialog>
 
+    <Dialog v-model:open="showTaskModal">
+      <DialogContent class="sm:max-w-[500px]">
+        <DialogHeader>
+          <DialogTitle>{{ editingId ? '编辑任务' : '新建任务' }}</DialogTitle>
+          <DialogDescription class="sr-only">任务详情表单</DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-4 py-2">
+          <div class="space-y-2">
+            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">任务内容</Label>
+            <Input v-model="form.title" placeholder="要做什么？" />
+          </div>
+
+          <div class="space-y-2">
+            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">备注</Label>
+            <Textarea v-model="form.desc" placeholder="细节..." class="resize-none" rows="3" />
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div class="space-y-2">
+              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">所属项目</Label>
+              <Select v-model="form.projectId">
+                <SelectTrigger>
+                  <SelectValue placeholder="选择项目" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">
+                    <span class="text-muted-foreground">🚫 未归档 (独立任务)</span>
+                  </SelectItem>
+                  <SelectItem v-for="p in selectableProjects" :key="p.id" :value="p.id">
+                    📁 {{ p.title }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div class="space-y-2">
+              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">优先级</Label>
+              <Select v-model="form.priority">
+                <SelectTrigger>
+                  <SelectValue placeholder="选择" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="high">🔴 高 (High)</SelectItem>
+                  <SelectItem value="medium">🟠 中 (Medium)</SelectItem>
+                  <SelectItem value="low">🔵 低 (Low)</SelectItem>
+                  <SelectItem value="none">⚪ 无</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">截止时间</Label>
+            <div class="flex gap-2">
+              <div class="flex-1">
+                <EnhancedDatePicker v-model="form.date" />
+              </div>
+              <div class="w-[100px] flex items-center bg-muted/30 px-2 rounded-md border border-dashed">
+                <Clock class="h-4 w-4 text-muted-foreground mr-1" />
+                <input type="time" v-model="form.time" class="w-full bg-transparent text-sm focus:outline-none font-mono cursor-pointer" />
+              </div>
+            </div>
+          </div>
+
+          <div class="space-y-3">
+            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">类别 (多选)</Label>
+            <div class="grid grid-cols-2 gap-3">
+              <div v-for="cat in CATEGORY_OPTIONS" :key="cat" class="flex items-center space-x-2">
+                <Checkbox
+                    :id="`category-${cat}`"
+                    :model-value="form.categories.includes(cat)"
+                    @update:model-value="(val) => handleCategoryChange(cat, val)"
+                />
+                <label :for="`category-${cat}`" class="text-sm font-medium leading-none cursor-pointer text-muted-foreground hover:text-foreground select-none">
+                  {{ cat }}
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" @click="showTaskModal = false">取消</Button>
+          <Button @click="handleSubmit">{{ editingId ? '保存更改' : '创建任务' }}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <Dialog v-model:open="showTrashModal">
       <DialogContent class="sm:max-w-[500px]">
         <DialogHeader>
           <DialogTitle>回收站</DialogTitle>
-          <div class="flex border rounded-md p-0.5 bg-muted/50 h-7 items-center">
-             <Button variant="ghost" size="sm" class="h-6 px-2 text-[10px]" :class="trashViewMode === 'tasks' ? 'bg-background shadow-sm' : 'text-muted-foreground'" @click="trashViewMode = 'tasks'">任务</Button>
-             <Button variant="ghost" size="sm" class="h-6 px-2 text-[10px]" :class="trashViewMode === 'projects' ? 'bg-background shadow-sm' : 'text-muted-foreground'" @click="trashViewMode = 'projects'">项目</Button>
+          <DialogDescription class="sr-only">回收站管理</DialogDescription>
+          <div class="flex border rounded-md p-0.5 bg-muted/50 h-7 items-center w-fit mt-2">
+            <Button variant="ghost" size="sm" class="h-6 px-2 text-[10px]" :class="trashViewMode === 'tasks' ? 'bg-background shadow-sm' : 'text-muted-foreground'" @click="trashViewMode = 'tasks'">任务</Button>
+            <Button variant="ghost" size="sm" class="h-6 px-2 text-[10px]" :class="trashViewMode === 'projects' ? 'bg-background shadow-sm' : 'text-muted-foreground'" @click="trashViewMode = 'projects'">项目</Button>
           </div>
         </DialogHeader>
-        <DialogDescription>30天内删除的内容。</DialogDescription>
 
         <div class="space-y-2 max-h-[60vh] overflow-y-auto pr-2 my-2 custom-scroll">
           <div v-if="trashViewMode === 'tasks'">
@@ -1082,8 +1158,8 @@ const resetForm = () => {
             <div v-for="task in trashTasks" :key="task.id" class="flex items-center justify-between p-3 border rounded-md bg-muted/20">
               <span class="text-sm line-through text-muted-foreground truncate max-w-[200px]">{{ task.title }}</span>
               <div class="flex gap-2">
-                 <Button size="sm" variant="outline" class="h-7 text-xs" @click="restoreTask(task.id)">恢复</Button>
-                 <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10" @click="permanentDelete(task.id)">彻底删除</Button>
+                <Button size="sm" variant="outline" class="h-7 text-xs" @click="restoreTask(task.id)">恢复</Button>
+                <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10" @click="permanentDelete(task.id)">彻底删除</Button>
               </div>
             </div>
           </div>
@@ -1095,8 +1171,8 @@ const resetForm = () => {
                 <span class="text-[10px] text-muted-foreground">关联任务将会一同恢复</span>
               </div>
               <div class="flex gap-2">
-                 <Button size="sm" variant="outline" class="h-7 text-xs" @click="restoreProject(proj.id)">恢复</Button>
-                 <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10" @click="permanentDeleteProject(proj.id)">彻底删除</Button>
+                <Button size="sm" variant="outline" class="h-7 text-xs" @click="restoreProject(proj.id)">恢复</Button>
+                <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10" @click="initiatePermanentDeleteProject(proj.id)">彻底删除</Button>
               </div>
             </div>
           </div>
@@ -1108,9 +1184,29 @@ const resetForm = () => {
       </DialogContent>
     </Dialog>
 
+    <Dialog v-model:open="showDeleteConfirmModal">
+      <DialogContent class="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2 text-destructive"><AlertOctagon class="h-5 w-5" /> 危险操作</DialogTitle>
+          <DialogDescription>该项目下包含关联任务，请选择处理方式。</DialogDescription>
+        </DialogHeader>
+        <div class="flex flex-col gap-3 py-4">
+          <Button variant="default" class="justify-start bg-red-600 hover:bg-red-700 text-white" @click="confirmDeleteProject(true)">
+            <Trash2 class="mr-2 h-4 w-4" /> 删除项目及所有任务
+          </Button>
+          <Button variant="outline" class="justify-start" @click="confirmDeleteProject(false)">
+            <ArchiveRestore class="mr-2 h-4 w-4" /> 仅删除项目 (任务移至未归档)
+          </Button>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" @click="showDeleteConfirmModal = false">取消</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <Transition name="slide-up">
       <div v-if="notification.show"
-        class="fixed bottom-6 right-6 px-5 py-3 rounded-md shadow-2xl border text-sm font-medium flex items-center gap-3 z-[60] bg-foreground text-background">
+           class="fixed bottom-6 right-6 px-5 py-3 rounded-md shadow-2xl border text-sm font-medium flex items-center gap-3 z-[60] bg-foreground text-background">
         <AlertCircle v-if="notification.type === 'error'" class="h-4 w-4 text-destructive-foreground" />
         <CheckCircle2 v-else class="h-4 w-4" />
         {{ notification.message }}
@@ -1135,7 +1231,7 @@ const resetForm = () => {
   animation: shake 0.6s cubic-bezier(.36,.07,.19,.97) both;
 }
 
-/* 🟢 通用自定义滚动条 (同时支持横向和纵向) */
+/* 🟢 全局自定义滚动条样式 */
 .custom-scroll {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -1153,11 +1249,20 @@ const resetForm = () => {
   border: 2px solid transparent;
   background-clip: content-box;
 }
-/* 鼠标悬停时显示 */
+/* 鼠标悬停在容器上时显示 */
 .custom-scroll:hover {
   scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
 }
 .custom-scroll:hover::-webkit-scrollbar-thumb {
   background-color: hsl(var(--muted-foreground) / 0.3);
+}
+
+/* 🟢 隐藏水平滚动条但保留功能 (用于标签栏) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }
 </style>
