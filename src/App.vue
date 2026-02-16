@@ -1,5 +1,5 @@
 <script setup>
-import {ref, computed, onMounted, watch} from 'vue';
+import {ref, computed, onMounted, watch, nextTick} from 'vue';
 import {
   Trash2, Plus, Calendar as CalendarIcon, CheckCircle2, Circle, Search,
   LayoutDashboard, PenSquare, Clock, AlertTriangle, AlertCircle, PieChart,
@@ -8,6 +8,7 @@ import {
   Download, Upload, FileJson, HardDrive, Eye, EyeOff, Archive, MoreVertical, RotateCcw, AlertOctagon
 } from 'lucide-vue-next';
 import {parseDate} from '@internationalized/date';
+import Sortable from 'sortablejs';
 
 // UI Components (Shadcn)
 import {Button} from '@/components/ui/button';
@@ -101,6 +102,9 @@ const filterStatus = ref('all');
 const filterCategories = ref([]);
 const viewMode = ref('project');
 
+// Sorting mode toggle
+const isSortingMode = ref(false);
+
 // File input ref
 const fileInput = ref(null);
 const pendingDeleteProjectId = ref(null);
@@ -176,10 +180,12 @@ const groupedTasks = computed(() => {
     progress: 0
   });
 
-  // 2. 活跃项目任务
-  activeProjects.value.forEach(proj => {
-    if (proj.status === 'completed') return;
+  // 2. 活跃项目任务 - 按 sortOrder 排序
+  const sortedProjects = [...activeProjects.value]
+    .filter(p => p.status !== 'completed')
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
+  sortedProjects.forEach(proj => {
     const projTasks = filteredTasks.filter(t => t.projectId === proj.id);
     const stats = getProjectTaskStats(proj.id);
 
@@ -406,6 +412,46 @@ const removeFilterCategory = (cat) => {
   filterCategories.value = filterCategories.value.filter(c => c !== cat);
 };
 
+// Initialize sortable for kanban view
+const initSortable = async () => {
+  if (viewMode.value !== 'project' || !isSortingMode.value) return;
+
+  await nextTick();
+
+  const container = document.querySelector('.kanban-container');
+  if (!container) return;
+
+  Sortable.create(container, {
+    group: 'projects',
+    animation: 150,
+    ghostClass: 'sortable-ghost',
+    dragClass: 'drag-item',
+    onEnd: (evt) => {
+      const projectsInOrder = Array.from(container.children)
+        .map(el => parseInt(el.dataset.projectId))
+        .filter(id => !isNaN(id));
+
+      // Update sortOrder based on new position
+      projectsInOrder.forEach((projectId, index) => {
+        const proj = projects.value.find(p => p.id === projectId);
+        if (proj) {
+          proj.sortOrder = index * 1000;
+        }
+      });
+
+      saveToLocalStorage(tasks.value, projects.value);
+      showNotification('项目排序已更新');
+    }
+  });
+};
+
+const toggleSortingMode = () => {
+  isSortingMode.value = !isSortingMode.value;
+  if (isSortingMode.value) {
+    initSortable();
+  }
+};
+
 // Trash operations
 const handleSoftDeleteTask = (taskId) => {
   softDeleteTask(taskId);
@@ -506,6 +552,16 @@ const resetProjectForm = () => {
           </Button>
         </div>
 
+        <Button v-if="viewMode === 'project'"
+                variant="outline"
+                size="sm"
+                class="h-9 px-3 shrink-0 font-medium transition-all"
+                :class="isSortingMode ? 'bg-primary text-primary-foreground sort-btn-active' : 'hover:border-primary/50'"
+                @click="toggleSortingMode">
+          <Grip class="mr-2 h-4 w-4 transition-transform" :class="isSortingMode ? 'rotate-90' : ''"/>
+          {{ isSortingMode ? '✓ 完成排序' : '📍 排序项目' }}
+        </Button>
+
         <Popover>
           <PopoverTrigger as-child>
             <Button variant="outline" size="sm" class="h-9 border-dashed px-3 shrink-0">
@@ -601,17 +657,22 @@ const resetProjectForm = () => {
         </Button>
       </div>
 
-      <div class="flex-1 flex flex-col overflow-hidden relative min-h-0">
+      <div class="flex-1 flex flex-col overflow-hidden relative min-h-0" :class="{ 'sorting-mode': isSortingMode }">
 
         <div v-if="viewMode === 'project'"
-             class="flex-1 w-full h-full overflow-x-auto flex gap-6 p-6 items-start custom-scroll">
+             class="kanban-container flex-1 w-full h-full overflow-x-auto flex gap-6 p-6 items-start custom-scroll">
           <div v-for="group in groupedTasks" :key="group.data.id"
-               class="w-[300px] shrink-0 flex flex-col max-h-full bg-muted/30 rounded-xl border min-h-0"
+               :data-project-id="group.type === 'project' ? group.data.id : null"
+               class="w-[300px] shrink-0 flex flex-col max-h-full bg-muted/30 rounded-xl border min-h-0 transition-all"
+               :class="{ 'cursor-grab active:cursor-grabbing': isSortingMode && group.type === 'project' }"
           >
             <div class="p-3 border-b flex flex-col gap-2 shrink-0 bg-muted/10 rounded-t-xl z-10">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <component :is="group.type === 'project' ? Folder : ArchiveRestore"
+                  <component v-if="isSortingMode && group.type === 'project'"
+                             :is="Grip"
+                             class="h-4 w-4 text-muted-foreground flex-shrink-0 hover:text-foreground transition-colors"/>
+                  <component v-else :is="group.type === 'project' ? Folder : ArchiveRestore"
                              class="h-4 w-4 text-muted-foreground"/>
                   <h3 class="font-semibold text-sm truncate max-w-[140px]" :title="group.data.title">{{
                       group.data.title

@@ -77,3 +77,55 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* SortableJS ghost class for kanban dragging */
+.sortable-ghost {
+  opacity: 0.5;
+  background-color: rgb(0 0 0 / 0.06);
+}
+
+/* Drag item animation */
+.drag-item {
+  transform: rotate(2deg);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+/* Drag handle hover effect */
+.drag-handle {
+  transition: all 0.2s ease;
+}
+
+.drag-handle:hover {
+  color: hsl(var(--primary));
+  transform: scale(1.2);
+}
+
+/* Sort button active state */
+.sort-btn-active {
+  animation: pulse-border 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(0, 0, 0, 0);
+  }
+}
+
+/* Project cards smooth transition during sorting */
+.kanban-container > div {
+  transition: all 0.3s cubic-bezier(0.23, 1, 0.320, 1);
+}
+
+/* Sorting mode - highlight draggable cards */
+.sorting-mode .kanban-container > div {
+  border-color: hsl(var(--primary) / 0.2);
+  transition: all 0.2s ease;
+}
+
+.sorting-mode .kanban-container > div:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background-color: hsl(var(--primary) / 0.05);
+}

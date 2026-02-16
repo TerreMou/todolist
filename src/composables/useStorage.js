@@ -36,9 +36,10 @@ export const useStorage = () => {
     if (savedProjects) {
       try {
         const parsed = JSON.parse(savedProjects);
-        projects = parsed.map(p => ({
+        projects = parsed.map((p, index) => ({
           ...p,
-          status: p.status || 'not_started'
+          status: p.status || 'not_started',
+          sortOrder: p.sortOrder !== undefined ? p.sortOrder : index * 1000
         }));
       } catch (e) {
         console.error('Failed to load projects:', e);

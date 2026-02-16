@@ -44,6 +44,7 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
       startDate: startStr,
       endDate: endStr,
       isDeleted: false,
+      sortOrder: Date.now(),
       createdAt: new Date().toISOString()
     });
 
