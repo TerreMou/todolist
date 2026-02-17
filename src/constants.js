@@ -23,6 +23,35 @@ export const PROJECT_STATUS_OPTIONS = [
   { value: 'completed', label: '已完成', color: 'bg-green-100 text-green-600' }
 ];
 
+// 项目类型选项
+export const PROJECT_TYPE_OPTIONS = [
+  { value: 'mkt', label: 'MKT 内部' },
+  { value: 'business_line', label: '业务线' },
+  { value: 'others', label: '其他' }
+];
+
+// 活动类型选项
+export const EVENT_TYPE_OPTIONS = [
+  { value: 'exhibition', label: 'Exhibition' },
+  { value: 'seminar', label: 'Seminar' },
+  { value: 'webinar', label: 'Webinar' },
+  { value: 'others', label: 'Others' }
+];
+
+// 业务线第一层选项
+export const BUSINESS_LINE_FIRST = [
+  { value: 'A', label: 'A' },
+  { value: 'P', label: 'P' },
+  { value: 'M', label: 'M' },
+  { value: 'I', label: 'I' }
+];
+
+// 业务线第二层选项 (00~07)
+export const BUSINESS_LINE_SECOND = Array.from({ length: 8 }, (_, i) => ({
+  value: String(i).padStart(2, '0'),
+  label: String(i).padStart(2, '0')
+}));
+
 // 优先级数值映射（用于排序）
 export const PRIORITY_MAP = {
   high: 3,

@@ -30,7 +30,7 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
   /**
    * 创建新项目
    */
-  const createProject = (title, desc, status, startDate, endDate) => {
+  const createProject = (title, desc, status, startDate, endDate, projectType, eventType, businessLine) => {
     if (!validateProjectTitle(title, showNotification)) return false;
 
     const startStr = startDate ? startDate.toString() : null;
@@ -43,6 +43,9 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
       status: status || 'not_started',
       startDate: startStr,
       endDate: endStr,
+      projectType: projectType || '',
+      eventType: eventType || '',
+      businessLine: businessLine || '',
       isDeleted: false,
       sortOrder: Date.now(),
       createdAt: new Date().toISOString()
@@ -55,7 +58,7 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
   /**
    * 更新项目
    */
-  const updateProject = (projectId, title, desc, status, startDate, endDate) => {
+  const updateProject = (projectId, title, desc, status, startDate, endDate, projectType, eventType, businessLine) => {
     if (!validateProjectTitle(title, showNotification)) return false;
 
     const index = projectsRef.value.findIndex(p => p.id === projectId);
@@ -70,7 +73,10 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
       desc,
       status,
       startDate: startStr,
-      endDate: endStr
+      endDate: endStr,
+      projectType: projectType || '',
+      eventType: eventType || '',
+      businessLine: businessLine || ''
     };
 
     showNotification('项目已更新');

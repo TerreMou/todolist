@@ -40,7 +40,11 @@ import {
   CATEGORY_OPTIONS,
   DEFAULT_TIME,
   PRIORITY_STYLES_CONFIG,
-  PROJECT_STATUS_OPTIONS
+  PROJECT_STATUS_OPTIONS,
+  PROJECT_TYPE_OPTIONS,
+  EVENT_TYPE_OPTIONS,
+  BUSINESS_LINE_FIRST,
+  BUSINESS_LINE_SECOND
 } from '@/constants';
 import {
   combineDateTime,
@@ -94,7 +98,10 @@ const projectForm = ref({
   desc: '',
   status: 'not_started',
   startDate: undefined,
-  endDate: undefined
+  endDate: undefined,
+  projectType: '',
+  eventType: '',
+  businessLine: ''
 });
 
 const searchQuery = ref('');
@@ -321,7 +328,10 @@ const handleProjectSubmit = () => {
       projectForm.value.desc,
       projectForm.value.status,
       projectForm.value.startDate,
-      projectForm.value.endDate
+      projectForm.value.endDate,
+      projectForm.value.projectType,
+      projectForm.value.eventType,
+      projectForm.value.businessLine
     );
   } else {
     createProject(
@@ -329,7 +339,10 @@ const handleProjectSubmit = () => {
       projectForm.value.desc,
       projectForm.value.status,
       projectForm.value.startDate,
-      projectForm.value.endDate
+      projectForm.value.endDate,
+      projectForm.value.projectType,
+      projectForm.value.eventType,
+      projectForm.value.businessLine
     );
   }
 
@@ -344,7 +357,10 @@ const editProjectForm = (proj) => {
     desc: proj.desc,
     status: proj.status || 'not_started',
     startDate: proj.startDate ? parseDate(proj.startDate) : undefined,
-    endDate: proj.endDate ? parseDate(proj.endDate) : undefined
+    endDate: proj.endDate ? parseDate(proj.endDate) : undefined,
+    projectType: proj.projectType || '',
+    eventType: proj.eventType || '',
+    businessLine: proj.businessLine || ''
   };
 };
 
@@ -494,7 +510,10 @@ const resetProjectForm = () => {
     desc: '',
     status: 'not_started',
     startDate: undefined,
-    endDate: undefined
+    endDate: undefined,
+    projectType: '',
+    eventType: '',
+    businessLine: ''
   };
 };
 </script>
@@ -720,6 +739,18 @@ const resetProjectForm = () => {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
+              </div>
+
+              <div v-if="group.type === 'project' && (group.data.projectType || group.data.eventType || group.data.businessLine)" class="flex gap-2">
+                <Badge v-if="group.data.projectType" variant="secondary" class="text-[10px] px-2 py-0.5 h-5">
+                  {{ PROJECT_TYPE_OPTIONS.find(t => t.value === group.data.projectType)?.label || group.data.projectType }}
+                </Badge>
+                <Badge v-if="group.data.eventType" variant="secondary" class="text-[10px] px-2 py-0.5 h-5">
+                  {{ EVENT_TYPE_OPTIONS.find(e => e.value === group.data.eventType)?.label || group.data.eventType }}
+                </Badge>
+                <Badge v-if="group.data.businessLine" variant="secondary" class="text-[10px] px-2 py-0.5 h-5 font-semibold">
+                  {{ group.data.businessLine }}
+                </Badge>
               </div>
 
               <div v-if="group.data.desc" class="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
@@ -959,66 +990,167 @@ const resetProjectForm = () => {
     </Dialog>
 
     <Dialog v-model:open="showProjectModal">
-      <DialogContent class="sm:max-w-[600px]">
+      <DialogContent class="sm:max-w-[900px] lg:max-w-[1000px] max-h-[calc(100vh-80px)] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>项目管理</DialogTitle>
           <DialogDescription>创建 or 编辑项目</DialogDescription>
         </DialogHeader>
-        <div class="space-y-3 my-4 max-h-[300px] overflow-y-auto pr-2 custom-scroll">
-          <div v-for="p in activeProjects" :key="p.id"
-               class="flex items-center justify-between p-3 border rounded-lg hover:bg-accent/50 transition-colors group">
-            <div class="flex flex-col gap-1">
-              <span class="font-medium text-sm flex items-center gap-2"><Folder class="h-4 w-4 text-muted-foreground"/> {{
-                  p.title
-                }}<Badge variant="outline" class="text-[10px] h-4"
-                         :class="getProjectStatusStyle(p.status)">{{ getProjectStatusLabel(p.status) }}</Badge></span>
-              <span class="text-xs text-muted-foreground line-clamp-1">{{ p.desc || '无描述' }}</span>
+
+        <!-- 内容区域滚动 -->
+        <div class="flex-1 overflow-y-auto pr-2 custom-scroll">
+          <!-- 项目列表表格 -->
+          <div class="space-y-2 mb-4">
+          <div class="text-xs text-muted-foreground font-medium px-2">已有项目</div>
+          <div class="max-h-[200px] overflow-y-auto pr-2 custom-scroll border rounded-lg">
+            <div v-if="activeProjects.length === 0" class="text-xs text-muted-foreground text-center py-4">
+              还没有项目，创建第一个吧
             </div>
-            <div class="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button size="icon" variant="ghost" class="h-7 w-7" @click="editProjectForm(p); showProjectModal = true">
-                <PenSquare class="h-3.5 w-3.5"/>
-              </Button>
-              <Button size="icon" variant="ghost" class="h-7 w-7 text-destructive hover:bg-destructive/10"
-                      @click="handleDeleteProject(p.id)">
-                <Trash2 class="h-3.5 w-3.5"/>
-              </Button>
+            <div v-else class="min-w-full">
+              <!-- 表头 -->
+              <div class="sticky top-0 grid grid-cols-12 gap-2 p-2 bg-muted/50 border-b text-xs font-medium text-muted-foreground">
+                <div class="col-span-5">项目名称</div>
+                <div class="col-span-4">描述</div>
+                <div class="col-span-2">状态</div>
+                <div class="col-span-1 text-right">操作</div>
+              </div>
+              <!-- 表体 -->
+              <div v-for="p in activeProjects" :key="p.id"
+                   class="grid grid-cols-12 gap-2 p-2 items-center border-b hover:bg-accent/30 transition-colors group">
+                <div class="col-span-5 flex items-center gap-2 min-w-0">
+                  <Folder class="h-4 w-4 text-muted-foreground flex-shrink-0"/>
+                  <span class="font-medium text-sm truncate">{{ p.title }}</span>
+                </div>
+                <div class="col-span-4 text-xs text-muted-foreground truncate">{{ p.desc || '—' }}</div>
+                <div class="col-span-2">
+                  <Badge variant="outline" class="text-[10px] h-5"
+                         :class="getProjectStatusStyle(p.status)">
+                    {{ getProjectStatusLabel(p.status) }}
+                  </Badge>
+                </div>
+                <div class="col-span-1 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button size="icon" variant="ghost" class="h-6 w-6" @click="editProjectForm(p); showProjectModal = true">
+                    <PenSquare class="h-3 w-3"/>
+                  </Button>
+                  <Button size="icon" variant="ghost" class="h-6 w-6 text-destructive hover:bg-destructive/10"
+                          @click="handleDeleteProject(p.id)">
+                    <Trash2 class="h-3 w-3"/>
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
         <Separator/>
 
-        <div class="space-y-4 pt-4">
-          <div class="grid gap-3">
-            <div class="grid grid-cols-4 items-center gap-4"><Label
-                class="text-left text-xs text-muted-foreground">名称</Label><Input v-model="projectForm.title"
-                                                                                   class="col-span-3 h-8"/></div>
-            <div class="grid grid-cols-4 items-center gap-4"><Label
-                class="text-left text-xs text-muted-foreground">描述</Label><Input v-model="projectForm.desc"
-                                                                                   class="col-span-3 h-8"/></div>
-            <div class="grid grid-cols-4 items-center gap-4"><Label
-                class="text-left text-xs text-muted-foreground">状态</Label><Select v-model="projectForm.status">
-              <SelectTrigger class="col-span-3 h-8">
-                <SelectValue/>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem v-for="s in PROJECT_STATUS_OPTIONS" :key="s.value" :value="s.value">
-                  <div class="flex items-center gap-2">
-                    <div class="w-2 h-2 rounded-full" :class="s.color.split(' ')[1].replace('text-', 'bg-')"></div>
-                    {{ s.label }}
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select></div>
-            <div class="grid grid-cols-4 items-center gap-4"><Label
-                class="text-left text-xs text-muted-foreground">时间</Label>
-              <div class="col-span-3 flex gap-2">
-                <EnhancedDatePicker v-model="projectForm.startDate" placeholderText="开始"/>
-                <span class="text-muted-foreground self-center">-</span>
-                <EnhancedDatePicker v-model="projectForm.endDate" placeholderText="结束"/>
+        <div class="space-y-4 pt-4 max-h-[500px] overflow-y-auto pr-2 custom-scroll">
+          <!-- 全宽字段 -->
+          <div class="space-y-3">
+            <div class="space-y-2">
+              <Label class="text-xs text-muted-foreground font-medium">名称</Label>
+              <Input v-model="projectForm.title" class="h-8"/>
+            </div>
+            <div class="space-y-2">
+              <Label class="text-xs text-muted-foreground font-medium">描述</Label>
+              <Input v-model="projectForm.desc" class="h-8"/>
+            </div>
+          </div>
+
+          <!-- 两列布局 -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- 左列 -->
+            <div class="space-y-3">
+              <div class="space-y-2">
+                <Label class="text-xs text-muted-foreground font-medium">项目类型</Label>
+                <Select v-model="projectForm.projectType">
+                  <SelectTrigger class="h-8">
+                    <SelectValue placeholder="选择项目类型"/>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="t in PROJECT_TYPE_OPTIONS" :key="t.value" :value="t.value">
+                      {{ t.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div class="space-y-2">
+                <Label class="text-xs text-muted-foreground font-medium">活动类型</Label>
+                <Select v-model="projectForm.eventType">
+                  <SelectTrigger class="h-8">
+                    <SelectValue placeholder="选择活动类型"/>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="e in EVENT_TYPE_OPTIONS" :key="e.value" :value="e.value">
+                      {{ e.label }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <!-- 右列 -->
+            <div class="space-y-3">
+              <div class="space-y-2">
+                <Label class="text-xs text-muted-foreground font-medium">状态</Label>
+                <Select v-model="projectForm.status">
+                  <SelectTrigger class="h-8">
+                    <SelectValue/>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="s in PROJECT_STATUS_OPTIONS" :key="s.value" :value="s.value">
+                      <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full" :class="s.color.split(' ')[1].replace('text-', 'bg-')"></div>
+                        {{ s.label }}
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div class="space-y-2">
+                <Label class="text-xs text-muted-foreground font-medium">时间</Label>
+                <div class="flex gap-2">
+                  <EnhancedDatePicker v-model="projectForm.startDate" placeholderText="开始"/>
+                  <span class="text-muted-foreground self-center text-xs">-</span>
+                  <EnhancedDatePicker v-model="projectForm.endDate" placeholderText="结束"/>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 业务线全宽 -->
+          <div class="space-y-3 border-t pt-3">
+            <Label class="text-xs text-muted-foreground font-medium">业务线</Label>
+            <div class="flex gap-4 items-start flex-wrap">
+              <!-- 第一层 -->
+              <div class="flex gap-2 flex-wrap">
+                <Button v-for="b in BUSINESS_LINE_FIRST" :key="b.value"
+                        :variant="projectForm.businessLine.substring(0, 1) === b.value ? 'default' : 'outline'"
+                        size="sm"
+                        class="h-8 px-3 text-xs"
+                        @click="projectForm.businessLine = b.value + (projectForm.businessLine.substring(1) || '')">
+                  {{ b.label }}
+                </Button>
+              </div>
+              <!-- 第二层 -->
+              <div v-if="projectForm.businessLine.length > 0" class="flex gap-2 flex-wrap">
+                <Button v-for="b in BUSINESS_LINE_SECOND" :key="b.value"
+                        :variant="projectForm.businessLine.substring(1) === b.value ? 'default' : 'secondary'"
+                        size="sm"
+                        class="h-8 px-2 text-xs"
+                        @click="projectForm.businessLine = projectForm.businessLine[0] + b.value">
+                  {{ b.label }}
+                </Button>
+              </div>
+              <!-- 结果显示 -->
+              <div v-if="projectForm.businessLine.length === 2" class="text-sm font-semibold text-primary px-2 py-1 bg-primary/10 rounded h-8 flex items-center">
+                {{ projectForm.businessLine }}
               </div>
             </div>
           </div>
         </div>
+        </div>
+
         <DialogFooter>
           <Button v-if="projectForm.id" variant="ghost" size="sm"
                   @click="resetProjectForm">
