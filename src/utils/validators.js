@@ -1,5 +1,6 @@
 import { differenceInDays } from 'date-fns';
 import { PRIORITY_STYLES_CONFIG, PROJECT_STATUS_OPTIONS, PRIORITY_MAP } from '@/constants';
+import { toLocalDate } from '@/utils/dateTime';
 
 /**
  * 检查任务是否紧急（3 天内截止）
@@ -8,10 +9,11 @@ import { PRIORITY_STYLES_CONFIG, PROJECT_STATUS_OPTIONS, PRIORITY_MAP } from '@/
  */
 export const isUrgent = (task) => {
   if (task.completed || !task.dueDate) return false;
-  const due = new Date(task.dueDate);
+  const due = toLocalDate(task.dueDate);
+  if (!due) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const dueDateOnly = new Date(due);
+  const dueDateOnly = new Date(due.getTime());
   dueDateOnly.setHours(0, 0, 0, 0);
   const diff = differenceInDays(dueDateOnly, today);
   return diff >= 0 && diff <= 3;
@@ -82,7 +84,11 @@ export const validateTaskProject = (projectId, showNotification) => {
  */
 export const validateDueDate = (dueDate, isEditing, showNotification) => {
   if (dueDate && !isEditing) {
-    const selected = new Date(dueDate);
+    const selected = toLocalDate(dueDate);
+    if (!selected) {
+      showNotification('截止日期无效', 'error');
+      return false;
+    }
     selected.setHours(0, 0, 0, 0);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -168,6 +174,8 @@ export const sortAndFilterTasks = (tasks, searchQuery, filterStatus, filterTypes
     if (priorityA !== priorityB) return priorityB - priorityA;
 
     // 4. 按截止日期排序（早到晚）
-    return new Date(a.dueDate || 0) - new Date(b.dueDate || 0);
+    const dateA = toLocalDate(a.dueDate);
+    const dateB = toLocalDate(b.dueDate);
+    return (dateA ? dateA.getTime() : 0) - (dateB ? dateB.getTime() : 0);
   });
 };

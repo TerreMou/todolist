@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import { Calendar as CalendarIcon, Eraser } from 'lucide-vue-next';
 import { format } from 'date-fns';
 import { today, getLocalTimeZone, CalendarDate, parseDate } from '@internationalized/date';
+import { isDateOnlyString, toLocalDate } from '@/utils/dateTime';
 
 // 引入 Shadcn 组件
 import { Button } from '@/components/ui/button';
@@ -59,7 +60,10 @@ const clearDate = () => {
 const displayDate = computed(() => {
   if (!props.modelValue) return null;
   try {
-    const dateObj = new Date(props.modelValue.toString());
+    const raw = props.modelValue.toString();
+    if (isDateOnlyString(raw)) return raw;
+    const dateObj = toLocalDate(raw);
+    if (!dateObj) return null;
     return format(dateObj, "yyyy-MM-dd");
   } catch (e) {
     return null;

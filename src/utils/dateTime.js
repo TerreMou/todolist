@@ -1,6 +1,38 @@
-import { format, differenceInDays } from 'date-fns';
+import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { parseDate } from '@internationalized/date';
+
+const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 是否为日期字符串（YYYY-MM-DD）
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export const isDateOnlyString = (value) =>
+  typeof value === 'string' && DATE_ONLY_REGEX.test(value);
+
+/**
+ * 将存储日期转换为本地 Date 对象（避免 YYYY-MM-DD 的 UTC 偏移）
+ * @param {string|Date|object} value
+ * @returns {Date|null}
+ */
+export const toLocalDate = (value) => {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  const raw = String(value);
+  if (isDateOnlyString(raw)) {
+    const [year, month, day] = raw.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 /**
  * 合并日期和时间为 ISO 字符串
@@ -36,7 +68,8 @@ export const extractTimeFromISO = (isoString) => {
  */
 export const extractDateFromISO = (isoString) => {
   try {
-    const isoDateStr = isoString.split('T')[0];
+    const raw = String(isoString);
+    const isoDateStr = isDateOnlyString(raw) ? raw : raw.split('T')[0];
     return parseDate(isoDateStr);
   } catch (e) {
     return undefined;
@@ -49,7 +82,11 @@ export const extractDateFromISO = (isoString) => {
  * @returns {string} 格式化的日期时间文本
  */
 export const formatDate = (iso) =>
-  iso ? format(new Date(iso), 'MMM do HH:mm', { locale: zhCN }) : '';
+  (() => {
+    const date = toLocalDate(iso);
+    if (!date) return '';
+    return format(date, 'MMM do HH:mm', { locale: zhCN });
+  })();
 
 /**
  * 格式化 ISO 日期为简单格式（YYYY/MM/DD）
@@ -57,7 +94,11 @@ export const formatDate = (iso) =>
  * @returns {string} 格式化的日期文本
  */
 export const formatSimpleDate = (iso) =>
-  iso ? format(new Date(iso), 'yyyy/MM/dd', { locale: zhCN }) : '-';
+  (() => {
+    const date = toLocalDate(iso);
+    if (!date) return '-';
+    return format(date, 'yyyy/MM/dd', { locale: zhCN });
+  })();
 
 /**
  * 生成 30 分钟间隔的时间选项数组
