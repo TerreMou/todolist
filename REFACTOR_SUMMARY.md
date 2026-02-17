@@ -84,7 +84,7 @@ src/
 - `getPriorityStyles(priority)` - 优先级样式
 - `getProjectStatusStyle(status)` - 项目状态样式
 - `getProjectStatusLabel(status)` - 项目状态标签
-- `validateTaskTitle(title, showNotification)` - 验证任务标题
+- `validateTaskTitle(title, showNotification)` - 验证任务内容
 - `validateDueDate(dueDate, isEditing, showNotification)` - 验证截止时间
 - `validateProjectTitle(title, showNotification)` - 验证项目标题
 - `sortAndFilterTasks()` - 综合排序过滤

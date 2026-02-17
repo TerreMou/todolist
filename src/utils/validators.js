@@ -9,9 +9,12 @@ import { PRIORITY_STYLES_CONFIG, PROJECT_STATUS_OPTIONS, PRIORITY_MAP } from '@/
 export const isUrgent = (task) => {
   if (task.completed || !task.dueDate) return false;
   const due = new Date(task.dueDate);
-  const now = new Date();
-  const diff = differenceInDays(due, now);
-  return due > now && diff <= 3 && diff >= -1;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dueDateOnly = new Date(due);
+  dueDateOnly.setHours(0, 0, 0, 0);
+  const diff = differenceInDays(dueDateOnly, today);
+  return diff >= 0 && diff <= 3;
 };
 
 /**
@@ -43,14 +46,28 @@ export const getProjectStatusLabel = (status) => {
 };
 
 /**
- * 验证任务标题
- * @param {string} title - 任务标题
+ * 验证任务内容
+ * @param {string} title - 任务内容
  * @param {Function} showNotification - 通知函数
  * @returns {boolean}
  */
 export const validateTaskTitle = (title, showNotification) => {
   if (!title.trim()) {
-    showNotification('请输入任务标题', 'error');
+    showNotification('请输入任务内容', 'error');
+    return false;
+  }
+  return true;
+};
+
+/**
+ * 验证任务所属项目
+ * @param {number|string|null} projectId - 项目 ID
+ * @param {Function} showNotification - 通知函数
+ * @returns {boolean}
+ */
+export const validateTaskProject = (projectId, showNotification) => {
+  if (!projectId || projectId === 'none') {
+    showNotification('请选择所属项目', 'error');
     return false;
   }
   return true;
@@ -64,9 +81,15 @@ export const validateTaskTitle = (title, showNotification) => {
  * @returns {boolean}
  */
 export const validateDueDate = (dueDate, isEditing, showNotification) => {
-  if (dueDate && new Date(dueDate) < new Date() && !isEditing) {
-    showNotification('截止时间无效', 'error');
-    return false;
+  if (dueDate && !isEditing) {
+    const selected = new Date(dueDate);
+    selected.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (selected < today) {
+      showNotification('截止日期无效', 'error');
+      return false;
+    }
   }
   return true;
 };
@@ -97,17 +120,22 @@ export const getPriorityWeight = (priority) => PRIORITY_MAP[priority] || 0;
  * @param {Array} tasks - 任务数组
  * @param {string} searchQuery - 搜索关键词
  * @param {string} filterStatus - 状态过滤（all/active/completed）
- * @param {Array} filterCategories - 分类过滤
+ * @param {Array} filterTypes - 类型过滤
  * @returns {Array} 排序后的任务数组
  */
-export const sortAndFilterTasks = (tasks, searchQuery, filterStatus, filterCategories) => {
+export const sortAndFilterTasks = (tasks, searchQuery, filterStatus, filterTypes) => {
   let result = tasks;
 
   // 搜索过滤
   if (searchQuery.trim()) {
     const query = searchQuery.toLowerCase();
     result = result.filter(
-      t => t.title.toLowerCase().includes(query) || t.desc.toLowerCase().includes(query)
+      t => {
+        const title = (t.title || '').toLowerCase();
+        const desc = (t.desc || '').toLowerCase();
+        const contact = (t.contact || '').toLowerCase();
+        return title.includes(query) || desc.includes(query) || contact.includes(query);
+      }
     );
   }
 
@@ -116,9 +144,9 @@ export const sortAndFilterTasks = (tasks, searchQuery, filterStatus, filterCateg
   else if (filterStatus === 'completed') result = result.filter(t => t.completed);
 
   // 分类过滤
-  if (filterCategories.length > 0) {
+  if (filterTypes.length > 0) {
     result = result.filter(
-      t => t.categories && t.categories.some(c => filterCategories.includes(c))
+      t => filterTypes.includes(t.taskType || '')
     );
   }
 
@@ -139,7 +167,7 @@ export const sortAndFilterTasks = (tasks, searchQuery, filterStatus, filterCateg
     const priorityB = getPriorityWeight(b.priority);
     if (priorityA !== priorityB) return priorityB - priorityA;
 
-    // 4. 按截止时间排序（早到晚）
+    // 4. 按截止日期排序（早到晚）
     return new Date(a.dueDate || 0) - new Date(b.dueDate || 0);
   });
 };

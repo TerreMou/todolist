@@ -9,6 +9,11 @@ import { validateProjectTitle } from '@/utils/validators';
  * @returns {Object} 项目相关的状态和方法
  */
 export const useProjects = (projectsRef, tasksRef, showNotification) => {
+  const isSameId = (a, b) => {
+    if (a === null || a === undefined || b === null || b === undefined) return false;
+    return String(a) === String(b);
+  };
+
   // 计算属性
   const activeProjects = computed(() => projectsRef.value.filter(p => !p.isDeleted));
   const trashProjects = computed(() => projectsRef.value.filter(p => p.isDeleted));
@@ -114,7 +119,7 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
   const getProjectTaskCount = (projectId, excludeDeleted = true) => {
     return tasksRef.value.filter(t => {
       if (excludeDeleted && t.isDeleted) return false;
-      return t.projectId === projectId;
+      return isSameId(t.projectId, projectId);
     }).length;
   };
 
@@ -143,7 +148,7 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
 
       let count = 0;
       tasksRef.value.forEach(t => {
-        if (t.projectId === projectId && t.isDeleted) {
+        if (isSameId(t.projectId, projectId) && t.isDeleted) {
           t.isDeleted = false;
           t.deletedAt = null;
           count++;
@@ -172,7 +177,7 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
       // 同时把任务移到回收站
       let count = 0;
       tasksRef.value.forEach(t => {
-        if (t.projectId === projectId && !t.isDeleted) {
+        if (isSameId(t.projectId, projectId) && !t.isDeleted) {
           t.isDeleted = true;
           t.deletedAt = new Date().toISOString();
           count++;
@@ -182,7 +187,7 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
     } else {
       // 任务解绑
       tasksRef.value.forEach(t => {
-        if (t.projectId === projectId) {
+        if (isSameId(t.projectId, projectId)) {
           t.projectId = null;
         }
       });
@@ -200,11 +205,11 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
   const confirmPermanentDeleteProject = (projectId, deleteTasks = false) => {
     if (deleteTasks) {
       // 删除关联的任务
-      tasksRef.value = tasksRef.value.filter(t => t.projectId !== projectId);
+      tasksRef.value = tasksRef.value.filter(t => !isSameId(t.projectId, projectId));
     } else {
       // 解绑任务
       tasksRef.value.forEach(t => {
-        if (t.projectId === projectId) {
+        if (isSameId(t.projectId, projectId)) {
           t.projectId = null;
         }
       });
@@ -220,13 +225,15 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
    * 清空项目回收站
    */
   const emptyProjectTrash = () => {
-    const deletedProjectIds = projectsRef.value
+    const deletedProjectIds = new Set(
+      projectsRef.value
       .filter(p => p.isDeleted)
-      .map(p => p.id);
+      .map(p => String(p.id))
+    );
 
     projectsRef.value = projectsRef.value.filter(p => !p.isDeleted);
     tasksRef.value = tasksRef.value.filter(
-      t => !(t.isDeleted && deletedProjectIds.includes(t.projectId))
+      t => !(t.isDeleted && t.projectId !== null && t.projectId !== undefined && deletedProjectIds.has(String(t.projectId)))
     );
 
     showNotification('回收站已清空');

@@ -3,10 +3,9 @@ export const STORAGE_KEY = 'jos-todo-list-data';
 export const STORAGE_KEY_PROJECTS = 'jos-todo-list-projects';
 export const TRASH_RETENTION_DAYS = 30;
 export const NOTIFICATION_DURATION = 3000;
-export const DEFAULT_TIME = '12:00';
 
-// 分类选项
-export const CATEGORY_OPTIONS = ['MKT', 'Event', 'Payment', 'Others'];
+// 任务类型选项
+export const TASK_TYPE_OPTIONS = ['Payment', 'Others'];
 
 // 优先级样式配置
 export const PRIORITY_STYLES_CONFIG = {

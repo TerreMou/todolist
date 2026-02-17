@@ -1,8 +1,8 @@
 import { computed } from 'vue';
-import { DEFAULT_TIME } from '@/constants';
-import { combineDateTime, extractDateFromISO, extractTimeFromISO } from '@/utils/dateTime';
+import { extractDateFromISO } from '@/utils/dateTime';
 import {
   validateTaskTitle,
+  validateTaskProject,
   validateDueDate,
   sortAndFilterTasks
 } from '@/utils/validators';
@@ -15,6 +15,11 @@ import {
  * @returns {Object} 任务相关的状态和方法
  */
 export const useTasks = (tasksRef, projectsRef, showNotification) => {
+  const isSameId = (a, b) => {
+    if (a === null || a === undefined || b === null || b === undefined) return false;
+    return String(a) === String(b);
+  };
+
   // 计算属性
   const activeTasks = computed(() => tasksRef.value.filter(t => !t.isDeleted));
   const trashTasks = computed(() => tasksRef.value.filter(t => t.isDeleted));
@@ -26,20 +31,18 @@ export const useTasks = (tasksRef, projectsRef, showNotification) => {
     sourceTasks,
     searchQuery,
     filterStatus,
-    filterCategories
+    filterTypes
   ) => {
-    return sortAndFilterTasks(sourceTasks, searchQuery, filterStatus, filterCategories);
+    return sortAndFilterTasks(sourceTasks, searchQuery, filterStatus, filterTypes);
   };
 
   /**
    * 创建新任务
    */
-  const createTask = (title, desc, priority, dueDate, categories, projectId) => {
+  const createTask = (title, desc, priority, dueDate, taskType, contact, projectId) => {
     if (!validateTaskTitle(title, showNotification)) return false;
+    if (!validateTaskProject(projectId, showNotification)) return false;
     if (!validateDueDate(dueDate, false, showNotification)) return false;
-
-    const safeCategories = Array.isArray(categories) ? [...categories] : [];
-    const safeProjectId = projectId === 'none' ? null : projectId;
 
     tasksRef.value.push({
       id: Date.now(),
@@ -47,8 +50,9 @@ export const useTasks = (tasksRef, projectsRef, showNotification) => {
       desc,
       priority,
       dueDate,
-      categories: safeCategories,
-      projectId: safeProjectId,
+      taskType: taskType || '',
+      contact: (contact || '').trim(),
+      projectId,
       completed: false,
       isDeleted: false,
       createdAt: new Date().toISOString()
@@ -61,15 +65,13 @@ export const useTasks = (tasksRef, projectsRef, showNotification) => {
   /**
    * 更新任务
    */
-  const updateTask = (taskId, title, desc, priority, dueDate, categories, projectId) => {
+  const updateTask = (taskId, title, desc, priority, dueDate, taskType, contact, projectId) => {
     if (!validateTaskTitle(title, showNotification)) return false;
+    if (!validateTaskProject(projectId, showNotification)) return false;
     if (!validateDueDate(dueDate, true, showNotification)) return false;
 
     const index = tasksRef.value.findIndex(t => t.id === taskId);
     if (index === -1) return false;
-
-    const safeCategories = Array.isArray(categories) ? [...categories] : [];
-    const safeProjectId = projectId === 'none' ? null : projectId;
 
     tasksRef.value[index] = {
       ...tasksRef.value[index],
@@ -77,8 +79,9 @@ export const useTasks = (tasksRef, projectsRef, showNotification) => {
       desc,
       priority,
       dueDate,
-      categories: safeCategories,
-      projectId: safeProjectId
+      taskType: taskType || '',
+      contact: (contact || '').trim(),
+      projectId
     };
 
     showNotification('任务已更新');
@@ -104,9 +107,9 @@ export const useTasks = (tasksRef, projectsRef, showNotification) => {
       desc: task.desc,
       priority: task.priority,
       date: extractDateFromISO(task.dueDate),
-      time: extractTimeFromISO(task.dueDate),
-      categories: Array.isArray(task.categories) ? [...task.categories] : [],
-      projectId: task.projectId || 'none'
+      taskType: task.taskType || '',
+      contact: task.contact || '',
+      projectId: task.projectId || ''
     };
   };
 
@@ -164,7 +167,7 @@ export const useTasks = (tasksRef, projectsRef, showNotification) => {
    */
   const getProjectTaskStats = (projectId) => {
     const projectTasks = tasksRef.value.filter(
-      t => t.projectId === projectId && !t.isDeleted
+      t => isSameId(t.projectId, projectId) && !t.isDeleted
     );
     const completed = projectTasks.filter(t => t.completed).length;
     const total = projectTasks.length;

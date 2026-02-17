@@ -2,10 +2,8 @@
 import {ref, computed, onMounted, watch, nextTick} from 'vue';
 import {
   Trash2, Plus, Calendar as CalendarIcon, CheckCircle2, Circle, Search,
-  LayoutDashboard, PenSquare, Clock, AlertTriangle, AlertCircle, PieChart,
-  ListFilter, X, Check, Filter, FolderPlus, Folder, LayoutList, Grip,
-  ArchiveRestore, FolderOpen, Kanban, Settings2, MoreHorizontal, Eraser,
-  Download, Upload, FileJson, HardDrive, Eye, EyeOff, Archive, MoreVertical, RotateCcw, AlertOctagon
+  LayoutDashboard, PenSquare, AlertTriangle, AlertCircle, X, Check, Filter, Folder, LayoutList, Grip,
+  ArchiveRestore, Kanban, Settings2, MoreHorizontal, Download, Upload, Archive, MoreVertical, RotateCcw
 } from 'lucide-vue-next';
 import {parseDate} from '@internationalized/date';
 import Sortable from 'sortablejs';
@@ -18,7 +16,6 @@ import {Textarea} from '@/components/ui/textarea';
 import {Badge} from '@/components/ui/badge';
 import {Label} from '@/components/ui/label';
 import {Popover, PopoverContent, PopoverTrigger} from '@/components/ui/popover';
-import {Checkbox} from '@/components/ui/checkbox';
 import {Separator} from '@/components/ui/separator';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
@@ -37,9 +34,7 @@ import EnhancedDatePicker from '@/components/EnhancedDatePicker.vue';
 
 // Constants & Composables
 import {
-  CATEGORY_OPTIONS,
-  DEFAULT_TIME,
-  PRIORITY_STYLES_CONFIG,
+  TASK_TYPE_OPTIONS,
   PROJECT_STATUS_OPTIONS,
   PROJECT_TYPE_OPTIONS,
   EVENT_TYPE_OPTIONS,
@@ -47,19 +42,13 @@ import {
   BUSINESS_LINE_SECOND
 } from '@/constants';
 import {
-  combineDateTime,
-  formatDate,
   formatSimpleDate,
-  generateTimeOptions,
-  extractDateFromISO,
-  extractTimeFromISO
 } from '@/utils/dateTime';
 import {
   isUrgent,
   getPriorityStyles,
   getProjectStatusStyle,
-  getProjectStatusLabel,
-  sortAndFilterTasks
+  getProjectStatusLabel
 } from '@/utils/validators';
 import { useNotification } from '@/composables/useNotification';
 import { useStorage } from '@/composables/useStorage';
@@ -76,20 +65,18 @@ const showTrashModal = ref(false);
 const showProjectModal = ref(false);
 const showTaskModal = ref(false);
 const showCompletedModal = ref(false);
-const showDeleteConfirmModal = ref(false);
 
 const trashViewMode = ref('tasks');
-const deleteActionType = ref('soft'); // 'soft' (回收站) or 'hard' (永久删除)
 
 // Forms
 const form = ref({
   title: '',
   desc: '',
+  contact: '',
   priority: 'low',
   date: undefined,
-  time: DEFAULT_TIME,
-  categories: [],
-  projectId: 'none'
+  taskType: '',
+  projectId: ''
 });
 
 const projectForm = ref({
@@ -106,7 +93,7 @@ const projectForm = ref({
 
 const searchQuery = ref('');
 const filterStatus = ref('all');
-const filterCategories = ref([]);
+const filterTypes = ref([]);
 const viewMode = ref('project');
 
 // Sorting mode toggle
@@ -114,7 +101,6 @@ const isSortingMode = ref(false);
 
 // File input ref
 const fileInput = ref(null);
-const pendingDeleteProjectId = ref(null);
 
 // --- Composables ---
 const { notification, showNotification } = useNotification();
@@ -142,7 +128,6 @@ const {
   updateProject,
   updateProjectStatus,
   unarchiveProject,
-  getProjectTaskCount,
   softDeleteProject,
   restoreProject,
   confirmSoftDeleteProject,
@@ -152,9 +137,6 @@ const {
 
 // --- Computed Properties ---
 
-// Time options 计算属性
-const timeOptions = computed(() => generateTimeOptions());
-
 // 统计信息
 const stats = computed(() => {
   const total = activeTasks.value.length;
@@ -163,6 +145,13 @@ const stats = computed(() => {
   return { total, completed, progress };
 });
 
+const isSameId = (a, b) => {
+  if (a === null || a === undefined || b === null || b === undefined) return false;
+  return String(a) === String(b);
+};
+
+const findProjectById = (projectId) => activeProjects.value.find(p => isSameId(p.id, projectId));
+
 // 看板视图的分组任务
 const groupedTasks = computed(() => {
   const groups = [];
@@ -170,7 +159,7 @@ const groupedTasks = computed(() => {
     activeTasks.value,
     searchQuery.value,
     filterStatus.value,
-    filterCategories.value
+    filterTypes.value
   );
 
   // 1. 未归档任务
@@ -179,7 +168,7 @@ const groupedTasks = computed(() => {
     type: 'inbox',
     data: {
       id: 'none',
-      title: '📂 未归档任务',
+      title: '未归档任务',
       desc: '不属于任何特定项目的独立任务',
       status: 'active'
     },
@@ -193,7 +182,7 @@ const groupedTasks = computed(() => {
     .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
   sortedProjects.forEach(proj => {
-    const projTasks = filteredTasks.filter(t => t.projectId === proj.id);
+    const projTasks = filteredTasks.filter(t => isSameId(t.projectId, proj.id));
     const stats = getProjectTaskStats(proj.id);
 
     groups.push({
@@ -221,7 +210,7 @@ const flatFilteredTasks = computed(() =>
     activeTasks.value,
     searchQuery.value,
     filterStatus.value,
-    filterCategories.value
+    filterTypes.value
   )
 );
 
@@ -276,35 +265,40 @@ const handleImport = (event) => {
 // Task form operations
 const openCreateTask = (projectId = 'none') => {
   resetForm();
-  form.value.projectId = projectId;
+  form.value.projectId = projectId === 'none' ? '' : projectId;
   showTaskModal.value = true;
 };
 
 const handleTaskSubmit = () => {
-  const finalDueDate = combineDateTime(form.value.date, form.value.time);
+  const finalDueDate = form.value.date ? form.value.date.toString() : '';
+  let success = false;
 
   if (editingId.value) {
-    updateTask(
+    success = updateTask(
       editingId.value,
       form.value.title,
       form.value.desc,
       form.value.priority,
       finalDueDate,
-      form.value.categories,
+      form.value.taskType,
+      form.value.contact,
       form.value.projectId
     );
-    editingId.value = null;
   } else {
-    createTask(
+    success = createTask(
       form.value.title,
       form.value.desc,
       form.value.priority,
       finalDueDate,
-      form.value.categories,
+      form.value.taskType,
+      form.value.contact,
       form.value.projectId
     );
   }
 
+  if (!success) return;
+
+  editingId.value = null;
   showTaskModal.value = false;
   resetForm();
 };
@@ -318,9 +312,6 @@ const editTaskForm = (task) => {
 
 // Project form operations
 const handleProjectSubmit = () => {
-  const startDate = projectForm.value.startDate ? projectForm.value.startDate.toString() : null;
-  const endDate = projectForm.value.endDate ? projectForm.value.endDate.toString() : null;
-
   if (projectForm.value.id) {
     updateProject(
       projectForm.value.id,
@@ -365,67 +356,26 @@ const editProjectForm = (proj) => {
 };
 
 const handleDeleteProject = (projectId) => {
-  const hasTasks = getProjectTaskCount(projectId, false) > 0;
-  if (hasTasks) {
-    pendingDeleteProjectId.value = projectId;
-    deleteActionType.value = 'soft';
-    showDeleteConfirmModal.value = true;
-  } else {
-    softDeleteProject(projectId);
-  }
+  // 项目删除时，关联任务一并移入回收站
+  confirmSoftDeleteProject(projectId, true);
 };
 
 const handlePermanentDeleteProject = (projectId) => {
-  const hasTasks = getProjectTaskCount(projectId, false) > 0;
-  pendingDeleteProjectId.value = projectId;
-  deleteActionType.value = 'hard';
-  if (hasTasks) {
-    showDeleteConfirmModal.value = true;
-  } else {
-    confirmPermanentDeleteProject(projectId, false);
-  }
+  // 永久删除项目时，关联任务一并永久删除
+  confirmPermanentDeleteProject(projectId, true);
 };
 
-const confirmDeleteProject = (deleteTasks) => {
-  const pid = pendingDeleteProjectId.value;
-  if (!pid) return;
-
-  if (deleteActionType.value === 'soft') {
-    confirmSoftDeleteProject(pid, deleteTasks);
-  } else {
-    confirmPermanentDeleteProject(pid, deleteTasks);
-  }
-
-  showDeleteConfirmModal.value = false;
-  pendingDeleteProjectId.value = null;
-};
-
-// Form field operations
-const handleCategoryChange = (cat, isChecked) => {
-  if (!Array.isArray(form.value.categories)) {
-    form.value.categories = [];
-  }
-
-  if (isChecked) {
-    if (!form.value.categories.includes(cat)) {
-      form.value.categories.push(cat);
-    }
-  } else {
-    form.value.categories = form.value.categories.filter(item => item !== cat);
-  }
-};
-
-const toggleFilterCategory = (cat) => {
-  const index = filterCategories.value.indexOf(cat);
+const toggleFilterType = (cat) => {
+  const index = filterTypes.value.indexOf(cat);
   if (index === -1) {
-    filterCategories.value.push(cat);
+    filterTypes.value.push(cat);
   } else {
-    filterCategories.value.splice(index, 1);
+    filterTypes.value.splice(index, 1);
   }
 };
 
-const removeFilterCategory = (cat) => {
-  filterCategories.value = filterCategories.value.filter(c => c !== cat);
+const removeFilterType = (cat) => {
+  filterTypes.value = filterTypes.value.filter(c => c !== cat);
 };
 
 // Initialize sortable for kanban view
@@ -494,11 +444,11 @@ const resetForm = () => {
   form.value = {
     title: '',
     desc: '',
+    contact: '',
     priority: 'low',
     date: undefined,
-    time: DEFAULT_TIME,
-    categories: [],
-    projectId: 'none'
+    taskType: '',
+    projectId: ''
   };
   editingId.value = null;
 };
@@ -533,6 +483,10 @@ const resetProjectForm = () => {
           <Button size="sm" class="gap-2 hidden sm:flex" @click="openCreateTask()">
             <Plus class="h-4 w-4"/>
             新建任务
+          </Button>
+          <Button variant="outline" size="sm" class="h-9 gap-2 border-dashed hidden sm:flex" @click="showProjectModal = true">
+            <Settings2 class="h-4 w-4"/>
+            项目管理
           </Button>
 
           <Button variant="ghost" size="icon" @click="showTrashModal = true" class="relative">
@@ -592,32 +546,32 @@ const resetProjectForm = () => {
           <PopoverTrigger as-child>
             <Button variant="outline" size="sm" class="h-9 border-dashed px-3 shrink-0">
               <Filter class="mr-2 h-4 w-4"/>
-              类别
-              <Badge v-if="filterCategories.length > 0" variant="secondary"
+              类型
+              <Badge v-if="filterTypes.length > 0" variant="secondary"
                      class="ml-2 rounded-sm px-1 font-normal h-5">
-                {{ filterCategories.length }}
+                {{ filterTypes.length }}
               </Badge>
             </Button>
           </PopoverTrigger>
           <PopoverContent class="w-[200px] p-0" align="end">
             <Command>
-              <CommandInput placeholder="搜索类别..."/>
+              <CommandInput placeholder="搜索类型..."/>
               <CommandList>
                 <CommandEmpty>无</CommandEmpty>
                 <CommandGroup>
-                  <CommandItem v-for="cat in CATEGORY_OPTIONS" :key="cat" :value="cat"
-                               @select="toggleFilterCategory(cat)">
+                  <CommandItem v-for="cat in TASK_TYPE_OPTIONS" :key="cat" :value="cat"
+                               @select="toggleFilterType(cat)">
                     <div class="mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary"
-                         :class="filterCategories.includes(cat) ? 'bg-primary text-primary-foreground' : 'opacity-50 [&_svg]:invisible'">
+                         :class="filterTypes.includes(cat) ? 'bg-primary text-primary-foreground' : 'opacity-50 [&_svg]:invisible'">
                       <Check class="h-4 w-4"/>
                     </div>
                     <span>{{ cat }}</span>
                   </CommandItem>
                 </CommandGroup>
-                <template v-if="filterCategories.length > 0">
+                <template v-if="filterTypes.length > 0">
                   <CommandSeparator/>
                   <CommandGroup>
-                    <CommandItem :value="'clear'" class="justify-center text-center" @select="filterCategories = []">
+                    <CommandItem :value="'clear'" class="justify-center text-center" @select="filterTypes = []">
                       清除筛选
                     </CommandItem>
                   </CommandGroup>
@@ -637,11 +591,6 @@ const resetProjectForm = () => {
         </div>
 
         <div class="flex-1"></div>
-
-        <Button variant="outline" size="sm" class="h-9 gap-2 border-dashed" @click="showProjectModal = true">
-          <Settings2 class="h-4 w-4"/>
-          项目
-        </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
@@ -670,15 +619,15 @@ const resetProjectForm = () => {
 
       </div>
 
-      <div v-if="filterCategories.length > 0"
+      <div v-if="filterTypes.length > 0"
            class="container max-w-full px-6 py-2 flex flex-wrap gap-2 items-center bg-muted/10 shrink-0 border-b flex-none">
         <span class="text-xs text-muted-foreground font-medium">筛选中:</span>
-        <Badge v-for="cat in filterCategories" :key="cat" variant="secondary"
-               class="h-6 cursor-pointer flex items-center gap-1" @click="removeFilterCategory(cat)">
+        <Badge v-for="cat in filterTypes" :key="cat" variant="secondary"
+               class="h-6 cursor-pointer flex items-center gap-1" @click="removeFilterType(cat)">
           {{ cat }}
           <X class="h-3 w-3 text-muted-foreground hover:text-foreground"/>
         </Badge>
-        <Button variant="ghost" size="sm" class="h-6 px-2 text-xs text-muted-foreground" @click="filterCategories = []">
+        <Button variant="ghost" size="sm" class="h-6 px-2 text-xs text-muted-foreground" @click="filterTypes = []">
           清除
         </Button>
       </div>
@@ -806,20 +755,23 @@ const resetProjectForm = () => {
                           {{ task.desc }}
                         </div>
 
-                        <div v-if="task.categories.length || task.priority !== 'none'" class="flex flex-wrap gap-1">
+                        <div v-if="task.taskType || task.priority !== 'none'" class="flex flex-wrap gap-1">
                           <Badge v-if="task.priority !== 'none'" variant="outline"
                                  class="text-[10px] px-1 py-0 h-4 border" :class="getPriorityStyles(task.priority)">
                             {{ task.priority }}
                           </Badge>
-                          <span v-for="cat in task.categories" :key="cat"
+                          <span v-if="task.taskType"
                                 class="text-[10px] text-muted-foreground bg-muted px-1 rounded-sm border border-border/50">
-                            #{{ cat }}
+                            {{ task.taskType }}
                           </span>
                         </div>
 
                         <div class="flex justify-between items-center pt-1">
                           <span v-if="task.dueDate" class="flex items-center gap-1 text-[10px] text-muted-foreground">
-                            <CalendarIcon class="h-3 w-3 opacity-70"/> {{ formatDate(task.dueDate) }}
+                            <CalendarIcon class="h-3 w-3 opacity-70"/> {{ formatSimpleDate(task.dueDate) }}
+                          </span>
+                          <span v-if="task.contact" class="text-[10px] text-muted-foreground">
+                            联系人: {{ task.contact }}
                           </span>
 
                           <div class="flex gap-1 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
@@ -898,24 +850,28 @@ const resetProjectForm = () => {
                       </div>
                       <span v-if="task.dueDate"
                             class="flex items-center text-[10px] text-muted-foreground bg-muted px-2 py-1 rounded-md">
-                          <CalendarIcon class="h-3 w-3 mr-1.5 opacity-70"/> {{ formatDate(task.dueDate) }}
+                          <CalendarIcon class="h-3 w-3 mr-1.5 opacity-70"/> {{ formatSimpleDate(task.dueDate) }}
                        </span>
                     </div>
                   </div>
 
                   <div class="flex items-center justify-between pl-8 mt-1 pt-2 border-t border-border/30">
                     <div class="flex items-center gap-4 overflow-hidden">
-                      <div v-if="task.projectId && activeProjects.find(p => p.id === task.projectId)"
+                      <div v-if="task.projectId && findProjectById(task.projectId)"
                            class="flex items-center text-xs text-muted-foreground">
                         <Folder class="h-3.5 w-3.5 mr-1.5"/>
-                        {{ activeProjects.find(p => p.id === task.projectId).title }}
+                        {{ findProjectById(task.projectId)?.title }}
                       </div>
 
-                      <div v-if="task.categories.length"
+                      <div v-if="task.taskType || task.contact"
                            class="flex gap-1 overflow-x-auto no-scrollbar max-w-full items-center">
-                           <span v-for="cat in task.categories" :key="cat"
+                           <span v-if="task.taskType"
                                  class="text-[10px] text-muted-foreground px-1.5 py-0.5 rounded bg-muted border border-border/50 whitespace-nowrap">
-                             #{{ cat }}
+                             {{ task.taskType }}
+                           </span>
+                           <span v-if="task.contact"
+                                 class="text-[10px] text-muted-foreground px-1.5 py-0.5 rounded bg-muted border border-border/50 whitespace-nowrap">
+                             联系人: {{ task.contact }}
                            </span>
                       </div>
                     </div>
@@ -977,7 +933,7 @@ const resetProjectForm = () => {
                 撤销
               </Button>
               <Button size="sm" variant="ghost" class="h-7 text-xs text-destructive hover:bg-destructive/10"
-                      @click="softDeleteProject(proj.id)">
+                      @click="handleDeleteProject(proj.id)">
                 <Trash2 class="h-3.5 w-3.5"/>
               </Button>
             </div>
@@ -1007,7 +963,7 @@ const resetProjectForm = () => {
             </div>
             <div v-else class="min-w-full">
               <!-- 表头 -->
-              <div class="sticky top-0 grid grid-cols-12 gap-2 p-2 bg-muted/50 border-b text-xs font-medium text-muted-foreground">
+              <div class="sticky top-0 z-10 grid grid-cols-12 gap-2 p-2 bg-background border-b text-xs font-medium text-muted-foreground shadow-sm">
                 <div class="col-span-5">项目名称</div>
                 <div class="col-span-4">描述</div>
                 <div class="col-span-2">状态</div>
@@ -1170,8 +1126,8 @@ const resetProjectForm = () => {
 
         <div class="space-y-4 py-2">
           <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">任务内容</Label>
-            <Input v-model="form.title" />
+            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">任务内容 *</Label>
+            <Input v-model="form.title" placeholder="请输入任务内容" />
           </div>
 
           <div class="space-y-2">
@@ -1181,11 +1137,10 @@ const resetProjectForm = () => {
 
           <div class="grid grid-cols-2 gap-4">
             <div class="space-y-2">
-              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">所属项目</Label>
+              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">所属项目 *</Label>
               <Select v-model="form.projectId">
                 <SelectTrigger><SelectValue placeholder="选择项目" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none"><span class="text-muted-foreground">🚫 未归档</span></SelectItem>
                   <SelectItem v-for="p in selectableProjectsList" :key="p.id" :value="p.id">📁 {{ p.title }}</SelectItem>
                 </SelectContent>
               </Select>
@@ -1214,35 +1169,24 @@ const resetProjectForm = () => {
           </div>
 
           <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">截止时间</Label>
-            <div class="flex gap-2">
-              <div class="flex-1">
-                <EnhancedDatePicker v-model="form.date" />
-              </div>
-              <div class="w-[110px]">
-                <Select v-model="form.time">
-                  <SelectTrigger>
-                    <div class="flex items-center text-muted-foreground">
-                      <Clock class="h-4 w-4 mr-2 shrink-0" />
-                      <span v-if="form.time" class="text-foreground">{{ form.time }}</span>
-                      <span v-else>时间</span>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent class="h-[200px]">
-                    <SelectItem v-for="t in timeOptions" :key="t" :value="t">{{ t }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">截止日期</Label>
+            <EnhancedDatePicker v-model="form.date" />
           </div>
 
-          <div class="space-y-3">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">类别</Label>
-            <div class="grid grid-cols-2 gap-3">
-              <div v-for="cat in CATEGORY_OPTIONS" :key="cat" class="flex items-center space-x-2">
-                <Checkbox :id="`category-${cat}`" :model-value="form.categories.includes(cat)" @update:model-value="(val) => handleCategoryChange(cat, val)" />
-                <label :for="`category-${cat}`" class="text-sm font-medium leading-none cursor-pointer select-none">{{ cat }}</label>
-              </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="space-y-2">
+              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">类型</Label>
+              <Select v-model="form.taskType">
+                <SelectTrigger><SelectValue placeholder="选择类型" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="type in TASK_TYPE_OPTIONS" :key="type" :value="type">{{ type }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div class="space-y-2">
+              <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">联系人</Label>
+              <Input v-model="form.contact" placeholder="输入联系人" />
             </div>
           </div>
         </div>
@@ -1306,31 +1250,6 @@ const resetProjectForm = () => {
               v-if="(trashViewMode === 'tasks' && trashTasks.length) || (trashViewMode === 'projects' && trashProjects.length)"
               variant="destructive" size="sm" class="h-8 text-xs" @click="handleEmptyTrash">清空
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
-    <Dialog v-model:open="showDeleteConfirmModal">
-      <DialogContent class="sm:max-w-[400px]">
-        <DialogHeader>
-          <DialogTitle class="flex items-center gap-2 text-destructive">
-            <AlertOctagon class="h-5 w-5"/>
-            危险操作
-          </DialogTitle>
-          <DialogDescription>该项目包含关联任务，请选择处理方式。</DialogDescription>
-        </DialogHeader>
-        <div class="flex flex-col gap-3 py-4">
-          <Button variant="destructive" class="justify-start" @click="confirmDeleteProject(true)">
-            <Trash2 class="mr-2 h-4 w-4"/>
-            删除项目及所有任务
-          </Button>
-          <Button variant="outline" class="justify-start" @click="confirmDeleteProject(false)">
-            <ArchiveRestore class="mr-2 h-4 w-4"/>
-            仅删除项目 (任务移至未归档)
-          </Button>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" @click="showDeleteConfirmModal = false">取消</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

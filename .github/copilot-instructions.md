@@ -203,7 +203,7 @@ import {
   getPriorityStyles,        // 获取优先级 Tailwind 样式
   getProjectStatusStyle,    // 获取项目状态样式
   getProjectStatusLabel,    // 获取项目状态标签
-  validateTaskTitle,        // 验证任务标题非空
+  validateTaskTitle,        // 验证任务内容非空
   validateDueDate,          // 验证截止日期有效性
   validateProjectTitle,     // 验证项目标题非空
   getPriorityWeight,        // 获取优先级权重（用于排序）
@@ -247,7 +247,7 @@ import {
 ```javascript
 {
   id: number,                              // 唯一标识 (Date.now())
-  title: string,                           // 任务标题（必填）
+  title: string,                           // 任务内容（必填）
   desc: string,                            // 任务描述（可选）
   priority: 'high'|'medium'|'low'|'none', // 优先级
   dueDate: string,                         // 截止时间（ISO 8601 格式）
@@ -278,7 +278,7 @@ import {
 ## Filtering & Sorting Behavior
 
 ### 搜索过滤流程
-1. **全文搜索** - 在任务标题和描述中搜索（不区分大小写）
+1. **全文搜索** - 在任务内容和描述中搜索（不区分大小写）
 2. **状态过滤** - all（全部）/ active（待办）/ completed（已完成）
 3. **分类过滤** - 多选分类（任务只要匹配一个分类即显示）
 4. **排序规则**（优先级从高到低）：

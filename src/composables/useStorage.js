@@ -7,6 +7,23 @@ import { format } from 'date-fns';
  * @returns {Object} 存储相关的方法
  */
 export const useStorage = () => {
+  const normalizeTasks = (rawTasks) => rawTasks.map(t => {
+    const legacyType = Array.isArray(t.categories) && t.categories.length > 0 ? t.categories[0] : '';
+    return {
+      ...t,
+      desc: typeof t.desc === 'string' ? t.desc : '',
+      taskType: typeof t.taskType === 'string' ? t.taskType : legacyType,
+      contact: typeof t.contact === 'string' ? t.contact : '',
+      projectId: t.projectId ?? null
+    };
+  });
+
+  const normalizeProjects = (rawProjects) => rawProjects.map((p, index) => ({
+    ...p,
+    status: p.status || 'not_started',
+    sortOrder: p.sortOrder !== undefined ? p.sortOrder : index * 1000
+  }));
+
   /**
    * 从 localStorage 加载任务和项目
    * @returns {Object} { tasks, projects }
@@ -20,11 +37,7 @@ export const useStorage = () => {
     if (savedTasks) {
       try {
         const parsed = JSON.parse(savedTasks);
-        tasks = parsed.map(t => ({
-          ...t,
-          categories: Array.isArray(t.categories) ? t.categories : [],
-          projectId: t.projectId || null
-        }));
+        tasks = normalizeTasks(parsed);
       } catch (e) {
         console.error('Failed to load tasks:', e);
         tasks = [];
@@ -36,11 +49,7 @@ export const useStorage = () => {
     if (savedProjects) {
       try {
         const parsed = JSON.parse(savedProjects);
-        projects = parsed.map((p, index) => ({
-          ...p,
-          status: p.status || 'not_started',
-          sortOrder: p.sortOrder !== undefined ? p.sortOrder : index * 1000
-        }));
+        projects = normalizeProjects(parsed);
       } catch (e) {
         console.error('Failed to load projects:', e);
         projects = [];
@@ -107,9 +116,11 @@ export const useStorage = () => {
   const importData = (data, tasksRef, projectsRef, showNotification) => {
     try {
       if (Array.isArray(data.tasks) && Array.isArray(data.projects)) {
-        tasksRef.value = data.tasks;
-        projectsRef.value = data.projects;
-        saveToLocalStorage(data.tasks, data.projects);
+        const normalizedTasks = normalizeTasks(data.tasks);
+        const normalizedProjects = normalizeProjects(data.projects);
+        tasksRef.value = normalizedTasks;
+        projectsRef.value = normalizedProjects;
+        saveToLocalStorage(normalizedTasks, normalizedProjects);
         showNotification('数据恢复成功！');
         return true;
       } else {
