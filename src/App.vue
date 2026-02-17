@@ -553,13 +553,20 @@ const resetProjectForm = () => {
         </div>
 
         <Button v-if="viewMode === 'project'"
-                variant="outline"
+                :variant="isSortingMode ? 'default' : 'outline'"
                 size="sm"
-                class="h-9 px-3 shrink-0 font-medium transition-all"
-                :class="isSortingMode ? 'bg-primary text-primary-foreground sort-btn-active' : 'hover:border-primary/50'"
+                class="h-9 px-4 shrink-0 font-medium transition-all duration-300 relative overflow-hidden"
+                :class="{
+                  'bg-gradient-to-r from-primary to-primary/80 text-primary-foreground shadow-lg sort-btn-active': isSortingMode,
+                  'border-dashed border-muted-foreground/40 hover:border-primary hover:bg-primary/5': !isSortingMode
+                }"
                 @click="toggleSortingMode">
-          <Grip class="mr-2 h-4 w-4 transition-transform" :class="isSortingMode ? 'rotate-90' : ''"/>
-          {{ isSortingMode ? '✓ 完成排序' : '📍 排序项目' }}
+          <span class="flex items-center gap-2">
+            <Grip class="h-4 w-4 transition-transform duration-300" :class="isSortingMode ? 'rotate-90 scale-110' : 'scale-100'"/>
+            <span class="transition-all duration-300">
+              {{ isSortingMode ? '完成排序' : '排序项目' }}
+            </span>
+          </span>
         </Button>
 
         <Popover>
