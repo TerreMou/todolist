@@ -1,6 +1,8 @@
 <script setup>
 import { AlertCircle, CheckCircle2 } from 'lucide-vue-next';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import AppHeaderBar from '@/components/business/AppHeaderBar.vue';
 import CompletedProjectsDialog from '@/components/business/CompletedProjectsDialog.vue';
 import ProjectManagementDialog from '@/components/business/ProjectManagementDialog.vue';
@@ -29,6 +31,12 @@ const {
   showProjectModal,
   showTaskModal,
   showCompletedModal,
+  showMagicKeyPrompt,
+  showDataConflictPrompt,
+  storageLoading,
+  conflictResolving,
+  storageMessage,
+  magicKeyInput,
   trashViewMode,
   form,
   projectForm,
@@ -60,6 +68,11 @@ const {
   handleRestoreTask,
   handlePermanentDeleteTask,
   handleEmptyTrash,
+  submitMagicKey,
+  resetMagicKey,
+  openMagicKeyPromptPanel,
+  useLocalConflictData,
+  useRemoteConflictData,
   unarchiveProject,
   restoreProject,
   handleExportData,
@@ -79,6 +92,7 @@ const {
       :trash-count="trashTasks.length"
       @create-task="openCreateTask()"
       @open-projects="showProjectModal = true"
+      @open-key-config="openMagicKeyPromptPanel"
       @open-trash="showTrashModal = true"
     />
 
@@ -189,6 +203,86 @@ const {
         {{ notification.message }}
       </div>
     </Transition>
+
+    <Transition name="fade-overlay">
+      <div
+        v-if="storageLoading"
+        class="fixed inset-0 z-[70] bg-background/70 backdrop-blur-sm flex items-center justify-center px-4"
+      >
+        <div class="w-full max-w-sm rounded-xl border bg-background shadow-xl p-5">
+          <div class="flex items-center gap-3">
+            <span class="loading-spinner" />
+            <div class="space-y-1">
+              <p class="text-sm font-medium">正在连接数据库...</p>
+              <p class="text-xs text-muted-foreground">请稍候，正在同步最新数据</p>
+            </div>
+          </div>
+          <div class="mt-4 h-1.5 w-full rounded-full bg-muted overflow-hidden">
+            <div class="loading-bar h-full w-1/3 rounded-full bg-primary/70" />
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <div
+      v-if="showMagicKeyPrompt"
+      class="fixed inset-0 z-[80] bg-background/90 backdrop-blur-sm flex items-center justify-center px-4"
+    >
+      <div class="w-full max-w-md rounded-xl border bg-background shadow-xl p-6 space-y-4">
+        <div class="space-y-1">
+          <h2 class="text-lg font-semibold">连接远程数据库</h2>
+          <p class="text-sm text-muted-foreground">
+            请输入你的专属密钥（首次可通过 URL `#key=...` 自动写入）。
+          </p>
+        </div>
+
+        <Input
+          v-model="magicKeyInput"
+          type="password"
+          autocomplete="off"
+          placeholder="请输入 Magic Key"
+          @keyup.enter="submitMagicKey"
+        />
+
+        <p v-if="storageMessage" class="text-xs text-red-500">
+          {{ storageMessage }}
+        </p>
+
+        <div class="flex items-center justify-end gap-2">
+          <Button variant="outline" @click="resetMagicKey">清除本地密钥</Button>
+          <Button :disabled="storageLoading" @click="submitMagicKey">
+            {{ storageLoading ? '连接中...' : '连接 Neon' }}
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="showDataConflictPrompt"
+      class="fixed inset-0 z-[90] bg-background/90 backdrop-blur-sm flex items-center justify-center px-4"
+    >
+      <div class="w-full max-w-lg rounded-xl border bg-background shadow-xl p-6 space-y-4">
+        <div class="space-y-1">
+          <h2 class="text-lg font-semibold">发现数据冲突</h2>
+          <p class="text-sm text-muted-foreground">
+            本地数据与远程数据库不一致，请选择要保留的版本。
+          </p>
+        </div>
+
+        <div class="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground leading-5">
+          选择“使用本地数据”会用当前浏览器数据覆盖远程数据库；选择“使用远程数据”会用云端数据覆盖当前本地缓存。
+        </div>
+
+        <div class="flex items-center justify-end gap-2">
+          <Button variant="outline" :disabled="conflictResolving" @click="useRemoteConflictData">
+            使用远程数据
+          </Button>
+          <Button :disabled="conflictResolving" @click="useLocalConflictData">
+            {{ conflictResolving ? '处理中...' : '使用本地数据' }}
+          </Button>
+        </div>
+      </div>
+    </div>
     </TooltipProvider>
   </div>
 </template>
@@ -210,6 +304,54 @@ const {
 .slide-up-enter-from, .slide-up-leave-to {
   opacity: 0;
   transform: translateY(20px);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-track {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+@keyframes fade-overlay-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-overlay-enter-active,
+.fade-overlay-leave-active {
+  transition: opacity 0.18s ease;
+}
+
+.fade-overlay-enter-from,
+.fade-overlay-leave-to {
+  opacity: 0;
+}
+
+.loading-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  border: 2px solid hsl(var(--muted-foreground) / 0.25);
+  border-top-color: hsl(var(--primary));
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+.loading-bar {
+  animation: loading-track 1.2s ease-in-out infinite;
 }
 
 @keyframes shake {

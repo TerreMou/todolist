@@ -1,5 +1,5 @@
 <script setup>
-import { Plus, Settings2, Trash2 } from 'lucide-vue-next';
+import { KeyRound, Plus, Settings2, Trash2 } from 'lucide-vue-next';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 
@@ -7,7 +7,7 @@ defineProps({
   trashCount: { type: Number, default: 0 }
 });
 
-const emit = defineEmits(['create-task', 'open-projects', 'open-trash']);
+const emit = defineEmits(['create-task', 'open-projects', 'open-trash', 'open-key-config']);
 </script>
 
 <template>
@@ -25,6 +25,9 @@ const emit = defineEmits(['create-task', 'open-projects', 'open-trash']);
         <Button variant="outline" size="sm" class="h-9 gap-2 border-dashed hidden sm:flex" @click="emit('open-projects')">
           <Settings2 class="h-4 w-4" />
           项目管理
+        </Button>
+        <Button variant="ghost" size="icon" @click="emit('open-key-config')">
+          <KeyRound class="h-4 w-4" />
         </Button>
 
         <Button variant="ghost" size="icon" class="relative" @click="emit('open-trash')">
