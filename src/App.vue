@@ -1,5 +1,7 @@
 <script setup>
+import { ref } from 'vue';
 import { AlertCircle, CheckCircle2 } from 'lucide-vue-next';
+import { Eye, EyeOff } from 'lucide-vue-next';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,11 +29,20 @@ const {
   notification,
   fileInput,
   editingId,
+  STORAGE_MODES,
+  storageMode,
+  storageStatus,
+  canUseRemote,
+  snapshots,
+  conflictSummary,
+  storageModeLabel,
+  storageStatusLabel,
+  formatConflictDateTime,
   showTrashModal,
   showProjectModal,
   showTaskModal,
   showCompletedModal,
-  showMagicKeyPrompt,
+  showStorageSettings,
   showDataConflictPrompt,
   storageLoading,
   conflictResolving,
@@ -69,10 +80,12 @@ const {
   handlePermanentDeleteTask,
   handleEmptyTrash,
   submitMagicKey,
-  resetMagicKey,
-  openMagicKeyPromptPanel,
+  openStorageSettings,
+  closeStorageSettings,
+  applyStorageMode,
   useLocalConflictData,
   useRemoteConflictData,
+  restoreFromSnapshot,
   unarchiveProject,
   restoreProject,
   handleExportData,
@@ -80,6 +93,8 @@ const {
   handleImport,
   resetProjectForm
 } = useAppController();
+
+const showStorageKey = ref(false);
 </script>
 
 <template>
@@ -92,7 +107,7 @@ const {
       :trash-count="trashTasks.length"
       @create-task="openCreateTask()"
       @open-projects="showProjectModal = true"
-      @open-key-config="openMagicKeyPromptPanel"
+      @open-key-config="openStorageSettings"
       @open-trash="showTrashModal = true"
     />
 
@@ -225,34 +240,83 @@ const {
     </Transition>
 
     <div
-      v-if="showMagicKeyPrompt"
+      v-if="showStorageSettings"
       class="fixed inset-0 z-[80] bg-background/90 backdrop-blur-sm flex items-center justify-center px-4"
     >
-      <div class="w-full max-w-md rounded-xl border bg-background shadow-xl p-6 space-y-4">
+      <div class="w-full max-w-xl rounded-xl border bg-background shadow-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
         <div class="space-y-1">
-          <h2 class="text-lg font-semibold">连接远程数据库</h2>
-          <p class="text-sm text-muted-foreground">
-            请输入你的专属密钥（首次可通过 URL `#key=...` 自动写入）。
-          </p>
+          <h2 class="text-lg font-semibold">存储设置</h2>
+          <p class="text-sm text-muted-foreground">你可以一直本地使用，也可以连接云端自动同步。</p>
         </div>
 
-        <Input
-          v-model="magicKeyInput"
-          type="password"
-          autocomplete="off"
-          placeholder="请输入 Magic Key"
-          @keyup.enter="submitMagicKey"
-        />
+        <div class="rounded-md border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground">
+          <div>当前模式：{{ storageModeLabel }}</div>
+          <div>同步状态：{{ storageStatusLabel }}</div>
+        </div>
 
-        <p v-if="storageMessage" class="text-xs text-red-500">
+        <div class="space-y-2">
+          <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">模式切换</p>
+          <div class="flex flex-wrap gap-2">
+            <Button
+              :variant="storageMode === STORAGE_MODES.LOCAL_ONLY ? 'default' : 'outline'"
+              size="sm"
+              @click="applyStorageMode(STORAGE_MODES.LOCAL_ONLY)"
+            >
+              仅本地保存
+            </Button>
+            <Button
+              :variant="storageMode === STORAGE_MODES.REMOTE_AUTO ? 'default' : 'outline'"
+              size="sm"
+              @click="applyStorageMode(STORAGE_MODES.REMOTE_AUTO)"
+            >
+              云端自动同步
+            </Button>
+          </div>
+        </div>
+
+        <div class="relative">
+          <Input
+            v-model="magicKeyInput"
+            :type="showStorageKey ? 'text' : 'password'"
+            autocomplete="off"
+            placeholder="输入或更新云端密钥（回车应用）"
+            class="pr-10"
+            @keyup.enter="submitMagicKey"
+          />
+          <button
+            type="button"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+            @click="showStorageKey = !showStorageKey"
+          >
+            <Eye v-if="!showStorageKey" class="h-4 w-4" />
+            <EyeOff v-else class="h-4 w-4" />
+          </button>
+        </div>
+
+        <p
+          v-if="storageMessage"
+          class="text-xs"
+          :class="storageStatus === 'remote_error' ? 'text-red-500' : 'text-muted-foreground'"
+        >
           {{ storageMessage }}
         </p>
 
+        <div class="space-y-2">
+          <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">本地快照恢复</p>
+          <div v-if="snapshots.length === 0" class="text-xs text-muted-foreground">暂无快照</div>
+          <div v-else class="space-y-2">
+            <div v-for="item in snapshots" :key="item.id" class="rounded-md border px-3 py-2 text-xs flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <p class="truncate font-medium">{{ item.reason }}</p>
+                <p class="text-muted-foreground">{{ formatConflictDateTime(item.createdAt) }}</p>
+              </div>
+              <Button variant="outline" size="sm" @click="restoreFromSnapshot(item.id)">恢复</Button>
+            </div>
+          </div>
+        </div>
+
         <div class="flex items-center justify-end gap-2">
-          <Button variant="outline" @click="resetMagicKey">清除本地密钥</Button>
-          <Button :disabled="storageLoading" @click="submitMagicKey">
-            {{ storageLoading ? '连接中...' : '连接 Neon' }}
-          </Button>
+          <Button :disabled="storageLoading" @click="closeStorageSettings">完成</Button>
         </div>
       </div>
     </div>
@@ -271,6 +335,10 @@ const {
 
         <div class="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground leading-5">
           选择“使用本地数据”会用当前浏览器数据覆盖远程数据库；选择“使用远程数据”会用云端数据覆盖当前本地缓存。
+        </div>
+        <div v-if="conflictSummary" class="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground leading-5 space-y-1">
+          <p>本地：任务 {{ conflictSummary.localTaskCount }} / 项目 {{ conflictSummary.localProjectCount }} / 更新时间 {{ formatConflictDateTime(conflictSummary.localUpdatedAt) }}</p>
+          <p>远程：任务 {{ conflictSummary.remoteTaskCount }} / 项目 {{ conflictSummary.remoteProjectCount }} / 更新时间 {{ formatConflictDateTime(conflictSummary.remoteUpdatedAt) }}</p>
         </div>
 
         <div class="flex items-center justify-end gap-2">

@@ -92,15 +92,16 @@ export const normalizeStatePayload = (payload) => {
 };
 
 export const getState = async (sql) => {
-  const rows = await sql`SELECT tasks, projects FROM app_state WHERE id = 1 LIMIT 1`;
+  const rows = await sql`SELECT tasks, projects, updated_at FROM app_state WHERE id = 1 LIMIT 1`;
   if (!rows.length) {
-    return { tasks: [], projects: [], empty: true };
+    return { tasks: [], projects: [], updatedAt: null, empty: true };
   }
 
   const row = rows[0];
   return {
     tasks: Array.isArray(row.tasks) ? row.tasks : [],
     projects: Array.isArray(row.projects) ? row.projects : [],
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
     empty: false
   };
 };

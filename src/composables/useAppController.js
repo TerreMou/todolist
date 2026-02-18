@@ -16,8 +16,9 @@ export const useAppController = () => {
   const showProjectModal = ref(false);
   const showTaskModal = ref(false);
   const showCompletedModal = ref(false);
-  const showMagicKeyPrompt = ref(false);
+  const showStorageSettings = ref(false);
   const showDataConflictPrompt = ref(false);
+
   const storageLoading = ref(false);
   const conflictResolving = ref(false);
   const magicKeyInput = ref('');
@@ -55,18 +56,26 @@ export const useAppController = () => {
 
   const { notification, showNotification } = useNotification();
   const {
+    STORAGE_MODES,
+    storageMode,
+    canUseRemote,
     storageStatus,
     storageMessage,
     magicKey,
     conflictState,
+    snapshots,
+    setMode,
     setMagicKey,
     clearMagicKey,
     resolveConflict,
+    restoreSnapshot,
     loadFromLocalStorage,
     saveToLocalStorage,
+    syncToRemote,
     exportData,
     importData
   } = useStorage();
+
   const {
     activeTasks,
     trashTasks,
@@ -81,6 +90,7 @@ export const useAppController = () => {
     emptyTaskTrash,
     getProjectTaskStats
   } = useTasks(tasks, projects, showNotification);
+
   const {
     activeProjects,
     trashProjects,
@@ -171,13 +181,34 @@ export const useAppController = () => {
     selectableProjects(editingId.value ? form.value.projectId : null)
   );
 
+  const conflictSummary = computed(() => conflictState.value?.summary || null);
+  const storageModeLabel = computed(() =>
+    storageMode.value === STORAGE_MODES.LOCAL_ONLY ? '仅本地' : '云端自动同步'
+  );
+  const storageStatusLabel = computed(() => {
+    const map = {
+      local_only: '当前仅保存在本地',
+      idle: '等待连接云端',
+      remote_ready: '已连接云端',
+      remote_error: '云端不可用，已回退本地',
+      conflict: '检测到本地与云端不一致'
+    };
+    return map[storageStatus.value] || '状态未知';
+  });
+
+  const formatConflictDateTime = (value) => {
+    if (!value) return '未知';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '未知';
+    return d.toLocaleString();
+  };
+
   onMounted(async () => {
     storageLoading.value = true;
     const loaded = await loadFromLocalStorage();
     tasks.value = loaded.tasks;
     projects.value = loaded.projects;
     magicKeyInput.value = magicKey.value || '';
-    showMagicKeyPrompt.value = ['missing_key', 'auth_failed'].includes(storageStatus.value);
     showDataConflictPrompt.value = storageStatus.value === 'conflict';
     isHydrating.value = false;
     storageLoading.value = false;
@@ -189,15 +220,10 @@ export const useAppController = () => {
   }, { deep: true });
 
   watch(storageStatus, (nextStatus) => {
-    showMagicKeyPrompt.value = ['missing_key', 'auth_failed'].includes(nextStatus);
     showDataConflictPrompt.value = nextStatus === 'conflict';
 
-    if (nextStatus === 'auth_failed') {
-      showNotification('远程密钥无效，请重新输入', 'error');
-    }
-
-    if (nextStatus === 'network_error') {
-      showNotification('远程保存失败，已回退到本地缓存', 'error');
+    if (nextStatus === 'remote_error') {
+      showNotification(storageMessage.value || '远程不可用，已回退本地', 'error');
     }
   });
 
@@ -426,6 +452,38 @@ export const useAppController = () => {
     }
   };
 
+  const openStorageSettings = () => {
+    magicKeyInput.value = magicKey.value || '';
+    showStorageSettings.value = true;
+  };
+
+  const closeStorageSettings = () => {
+    showStorageSettings.value = false;
+  };
+
+  const applyStorageMode = async (mode) => {
+    setMode(mode);
+
+    if (mode === STORAGE_MODES.LOCAL_ONLY) {
+      showNotification('已切换为本地模式');
+      return;
+    }
+
+    if (!magicKey.value.trim()) {
+      showNotification('请先输入密钥再连接远程', 'error');
+      return;
+    }
+
+    storageLoading.value = true;
+    const loaded = await loadFromLocalStorage({ detectConflict: true });
+    if (storageStatus.value !== 'conflict') {
+      tasks.value = loaded.tasks;
+      projects.value = loaded.projects;
+      showNotification('远程数据已加载');
+    }
+    storageLoading.value = false;
+  };
+
   const submitMagicKey = async () => {
     const candidate = magicKeyInput.value.trim();
     if (!candidate) {
@@ -436,28 +494,25 @@ export const useAppController = () => {
     storageLoading.value = true;
     setMagicKey(candidate);
 
-    const loaded = await loadFromLocalStorage();
-    tasks.value = loaded.tasks;
-    projects.value = loaded.projects;
-    showMagicKeyPrompt.value = ['missing_key', 'auth_failed'].includes(storageStatus.value);
-    storageLoading.value = false;
-
-    if (storageStatus.value === 'ready') {
-      showNotification('远程数据库连接成功');
-    } else {
-      showNotification(storageMessage.value || '密钥校验失败', 'error');
+    if (storageMode.value === STORAGE_MODES.LOCAL_ONLY) {
+      setMode(STORAGE_MODES.REMOTE_AUTO);
     }
+
+    const loaded = await loadFromLocalStorage({ detectConflict: true });
+    if (storageStatus.value !== 'conflict') {
+      tasks.value = loaded.tasks;
+      projects.value = loaded.projects;
+      showNotification('远程数据库连接成功');
+    }
+
+    storageLoading.value = false;
   };
 
-  const resetMagicKey = () => {
+  const switchToLocalOnly = () => {
     clearMagicKey();
+    setMode(STORAGE_MODES.LOCAL_ONLY);
     magicKeyInput.value = '';
-    showMagicKeyPrompt.value = true;
-  };
-
-  const openMagicKeyPromptPanel = () => {
-    magicKeyInput.value = magicKey.value || '';
-    showMagicKeyPrompt.value = true;
+    showNotification('已切换到本地模式');
   };
 
   const useLocalConflictData = async () => {
@@ -492,19 +547,49 @@ export const useAppController = () => {
     }
   };
 
+  const restoreFromSnapshot = async (snapshotId) => {
+    const restored = restoreSnapshot(snapshotId);
+    if (!restored) {
+      showNotification('快照不存在', 'error');
+      return;
+    }
+
+    tasks.value = restored.tasks;
+    projects.value = restored.projects;
+    showNotification('已恢复本地快照');
+
+    if (canUseRemote.value) {
+      try {
+        await syncToRemote(restored.tasks, restored.projects);
+        showNotification('已将快照同步到远程');
+      } catch {
+        showNotification('快照已恢复到本地，远程同步失败', 'error');
+      }
+    }
+  };
+
   return {
     notification,
     fileInput,
     editingId,
+    STORAGE_MODES,
+    storageMode,
+    storageStatus,
+    storageMessage,
+    canUseRemote,
+    snapshots,
+    conflictSummary,
+    storageModeLabel,
+    storageStatusLabel,
+    formatConflictDateTime,
     showTrashModal,
     showProjectModal,
     showTaskModal,
     showCompletedModal,
-    showMagicKeyPrompt,
+    showStorageSettings,
     showDataConflictPrompt,
     storageLoading,
     conflictResolving,
-    storageMessage,
     magicKeyInput,
     trashViewMode,
     form,
@@ -537,11 +622,14 @@ export const useAppController = () => {
     handleRestoreTask,
     handlePermanentDeleteTask,
     handleEmptyTrash,
+    openStorageSettings,
+    closeStorageSettings,
+    applyStorageMode,
     submitMagicKey,
-    resetMagicKey,
-    openMagicKeyPromptPanel,
+    switchToLocalOnly,
     useLocalConflictData,
     useRemoteConflictData,
+    restoreFromSnapshot,
     unarchiveProject,
     restoreProject,
     handleExportData,

@@ -1,22 +1,58 @@
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { STORAGE_KEY, STORAGE_KEY_PROJECTS, TRASH_RETENTION_DAYS } from '@/constants';
 import { format } from 'date-fns';
 
 const MAGIC_KEY_STORAGE = 'jos-todo-list-magic-key';
+const STORAGE_MODE_KEY = 'jos-todo-list-storage-mode';
+const LOCAL_META_KEY = 'jos-todo-list-local-meta';
+const SNAPSHOTS_KEY = 'jos-todo-list-snapshots';
+const MAX_SNAPSHOTS = 5;
+
+const STORAGE_MODES = {
+  LOCAL_ONLY: 'local_only',
+  REMOTE_AUTO: 'remote_auto'
+};
+
+const VALID_STORAGE_MODES = new Set(Object.values(STORAGE_MODES));
+
+const normalizeMode = (value) => (VALID_STORAGE_MODES.has(value) ? value : STORAGE_MODES.LOCAL_ONLY);
+
+const normalizeISO = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+};
+
+const readJson = (key, fallback) => {
+  const raw = localStorage.getItem(key);
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+};
 
 /**
  * 存储管理 composable
  * @returns {Object} 存储相关的方法
  */
 export const useStorage = () => {
-  const storageStatus = ref('idle');
+  const storageMode = ref(normalizeMode(localStorage.getItem(STORAGE_MODE_KEY)));
+  const storageStatus = ref(storageMode.value === STORAGE_MODES.LOCAL_ONLY ? 'local_only' : 'idle');
   const storageMessage = ref('');
   const magicKey = ref(localStorage.getItem(MAGIC_KEY_STORAGE) || '');
   const conflictState = ref(null);
+  const snapshots = ref(readJson(SNAPSHOTS_KEY, []));
 
   let pendingSavePayload = null;
   let isSaving = false;
   let saveTimer = null;
+
+  const canUseRemote = computed(() => storageMode.value === STORAGE_MODES.REMOTE_AUTO);
+
+  const isAutoSyncMode = computed(() => storageMode.value === STORAGE_MODES.REMOTE_AUTO);
 
   const normalizeTasks = (rawTasks) => rawTasks.map(t => {
     const legacyType = Array.isArray(t.categories) && t.categories.length > 0 ? t.categories[0] : '';
@@ -68,6 +104,13 @@ export const useStorage = () => {
     return cleanExpiredTrash(tasks, projects);
   };
 
+  const readLocalMeta = () => {
+    const meta = readJson(LOCAL_META_KEY, null);
+    return {
+      updatedAt: normalizeISO(meta?.updatedAt)
+    };
+  };
+
   const hasAnyData = (state) => state.tasks.length > 0 || state.projects.length > 0;
 
   const canonicalize = (value) => {
@@ -99,9 +142,35 @@ export const useStorage = () => {
       && stableStringify(left.projects) === stableStringify(right.projects);
   };
 
-  const persistLocalState = (tasks, projects) => {
+  const persistStorageMode = (mode) => {
+    const normalized = normalizeMode(mode);
+    storageMode.value = normalized;
+    localStorage.setItem(STORAGE_MODE_KEY, normalized);
+  };
+
+  const persistLocalState = (tasks, projects, updatedAt = new Date().toISOString()) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
     localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
+    localStorage.setItem(LOCAL_META_KEY, JSON.stringify({ updatedAt: normalizeISO(updatedAt) || new Date().toISOString() }));
+  };
+
+  const pushSnapshot = (reason, state, metadata = {}) => {
+    if (!state) return;
+
+    const record = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      createdAt: new Date().toISOString(),
+      reason,
+      metadata,
+      state: {
+        tasks: state.tasks,
+        projects: state.projects
+      }
+    };
+
+    const next = [record, ...snapshots.value].slice(0, MAX_SNAPSHOTS);
+    snapshots.value = next;
+    localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(next));
   };
 
   const getMagicKeyFromHash = () => {
@@ -125,6 +194,10 @@ export const useStorage = () => {
     if (fromHash) {
       localStorage.setItem(MAGIC_KEY_STORAGE, fromHash);
       magicKey.value = fromHash;
+
+      if (storageMode.value === STORAGE_MODES.LOCAL_ONLY) {
+        persistStorageMode(STORAGE_MODES.REMOTE_AUTO);
+      }
     }
   };
 
@@ -142,8 +215,7 @@ export const useStorage = () => {
 
   const clearMagicKey = () => {
     setMagicKey('');
-    storageStatus.value = 'missing_key';
-    storageMessage.value = '密钥已清除，请重新输入。';
+    storageMessage.value = '密钥已清除。';
   };
 
   const requestState = async (path, method, payload) => {
@@ -178,56 +250,86 @@ export const useStorage = () => {
     return data;
   };
 
-  const loadFromLocalStorage = async () => {
+  const buildConflictSummary = (localState, remoteState, remoteUpdatedAt) => {
+    const localMeta = readLocalMeta();
+    return {
+      localTaskCount: localState.tasks.length,
+      localProjectCount: localState.projects.length,
+      remoteTaskCount: remoteState.tasks.length,
+      remoteProjectCount: remoteState.projects.length,
+      localUpdatedAt: localMeta.updatedAt,
+      remoteUpdatedAt: normalizeISO(remoteUpdatedAt)
+    };
+  };
+
+  const setLocalOnlyStatus = (message = '当前仅使用本地存储。') => {
+    storageStatus.value = 'local_only';
+    storageMessage.value = message;
+  };
+
+  const loadFromLocalStorage = async (options = {}) => {
+    const { detectConflict = true } = options;
+
     bootstrapMagicKey();
     const localState = loadLocalState();
     conflictState.value = null;
 
+    if (!canUseRemote.value) {
+      setLocalOnlyStatus('当前仅使用本地存储。');
+      return localState;
+    }
+
     if (!magicKey.value.trim()) {
-      storageStatus.value = 'missing_key';
-      storageMessage.value = '请输入密钥以连接远程数据库。';
+      setLocalOnlyStatus('未配置密钥，当前仅本地模式。');
       return localState;
     }
 
     try {
       const remoteState = await requestState('state-get', 'GET');
-      const hasLocalData = localState.tasks.length > 0 || localState.projects.length > 0;
+      const hasLocalData = hasAnyData(localState);
 
-      if (remoteState.empty && hasLocalData) {
-        await requestState('state-migrate', 'POST', localState);
-        storageStatus.value = 'ready';
-        storageMessage.value = '已将本地数据迁移到远程数据库。';
-        return localState;
+      if (remoteState.empty) {
+        if (hasLocalData) {
+          await requestState('state-migrate', 'POST', localState);
+          storageStatus.value = 'remote_ready';
+          storageMessage.value = '已将本地数据初始化到远程。';
+          return localState;
+        }
+
+        const emptyState = { tasks: [], projects: [] };
+        persistLocalState(emptyState.tasks, emptyState.projects);
+        storageStatus.value = 'remote_ready';
+        storageMessage.value = '远程数据库已连接。';
+        return emptyState;
       }
 
       const normalizedTasks = normalizeTasks(Array.isArray(remoteState.tasks) ? remoteState.tasks : []);
       const normalizedProjects = normalizeProjects(Array.isArray(remoteState.projects) ? remoteState.projects : []);
       const cleaned = cleanExpiredTrash(normalizedTasks, normalizedProjects);
 
-      if (hasAnyData(localState) && hasAnyData(cleaned) && !isSameState(localState, cleaned)) {
+      if (detectConflict && hasAnyData(localState) && hasAnyData(cleaned) && !isSameState(localState, cleaned)) {
         conflictState.value = {
           local: localState,
-          remote: cleaned
+          remote: cleaned,
+          remoteUpdatedAt: normalizeISO(remoteState.updatedAt),
+          summary: buildConflictSummary(localState, cleaned, remoteState.updatedAt)
         };
         storageStatus.value = 'conflict';
         storageMessage.value = '检测到本地与远程数据不一致，请确认使用哪个版本。';
         return localState;
       }
 
-      persistLocalState(cleaned.tasks, cleaned.projects);
-      storageStatus.value = 'ready';
-      storageMessage.value = '';
+      persistLocalState(cleaned.tasks, cleaned.projects, remoteState.updatedAt || new Date().toISOString());
+      storageStatus.value = 'remote_ready';
+      storageMessage.value = '远程数据库已连接。';
       return cleaned;
     } catch (error) {
-      if (error.code === 'missing_key') {
-        storageStatus.value = 'missing_key';
-        storageMessage.value = '请输入密钥以连接远程数据库。';
-      } else if (error.status === 401) {
-        storageStatus.value = 'auth_failed';
-        storageMessage.value = '密钥无效，请重新输入。';
+      if (error.status === 401) {
+        storageStatus.value = 'remote_error';
+        storageMessage.value = '密钥无效，已回退到本地模式。';
       } else {
-        storageStatus.value = 'network_error';
-        storageMessage.value = '远程数据库不可用，暂时使用本地数据。';
+        storageStatus.value = 'remote_error';
+        storageMessage.value = '远程不可用，已回退到本地模式。';
       }
       console.error('Failed to load remote state:', error);
       return localState;
@@ -236,6 +338,7 @@ export const useStorage = () => {
 
   const flushRemoteSave = async () => {
     if (isSaving || !pendingSavePayload) return;
+    if (!isAutoSyncMode.value || !canUseRemote.value || !magicKey.value.trim()) return;
 
     isSaving = true;
     while (pendingSavePayload) {
@@ -244,16 +347,13 @@ export const useStorage = () => {
 
       try {
         await requestState('state-save', 'POST', currentPayload);
-        storageStatus.value = 'ready';
-        storageMessage.value = '';
+        storageStatus.value = 'remote_ready';
+        storageMessage.value = '远程自动同步成功。';
       } catch (error) {
-        if (error.status === 401) {
-          storageStatus.value = 'auth_failed';
-          storageMessage.value = '密钥无效，请重新输入。';
-        } else {
-          storageStatus.value = 'network_error';
-          storageMessage.value = '远程保存失败，数据仅保存在本地。';
-        }
+        storageStatus.value = 'remote_error';
+        storageMessage.value = error.status === 401
+          ? '密钥无效，自动同步已暂停。'
+          : '远程保存失败，当前继续本地保存。';
         console.error('Failed to save remote state:', error);
       }
     }
@@ -261,11 +361,6 @@ export const useStorage = () => {
     isSaving = false;
   };
 
-  /**
-   * 保存任务和项目到本地，并异步同步到远程
-   * @param {Array} tasks - 任务数组
-   * @param {Array} projects - 项目数组
-   */
   const saveToLocalStorage = (tasks, projects) => {
     persistLocalState(tasks, projects);
 
@@ -273,9 +368,16 @@ export const useStorage = () => {
       return;
     }
 
+    if (!isAutoSyncMode.value || !canUseRemote.value) {
+      if (!canUseRemote.value) {
+        setLocalOnlyStatus('当前仅使用本地存储。');
+      }
+      return;
+    }
+
     if (!magicKey.value.trim()) {
-      storageStatus.value = 'missing_key';
-      storageMessage.value = '未配置密钥，当前仅保存到本地。';
+      storageStatus.value = 'remote_error';
+      storageMessage.value = '缺少密钥，自动同步已暂停。';
       return;
     }
 
@@ -290,12 +392,79 @@ export const useStorage = () => {
     }, 500);
   };
 
-  /**
-   * 导出数据为 JSON
-   * @param {Array} tasks - 任务数组
-   * @param {Array} projects - 项目数组
-   * @param {Function} showNotification - 通知函数
-   */
+  const syncToRemote = async (tasks, projects) => {
+    if (!canUseRemote.value) {
+      setLocalOnlyStatus('当前为本地模式，未执行远程同步。');
+      return { ok: false, reason: 'local_only' };
+    }
+
+    if (!magicKey.value.trim()) {
+      storageStatus.value = 'remote_error';
+      storageMessage.value = '缺少密钥，无法同步到远程。';
+      return { ok: false, reason: 'missing_key' };
+    }
+
+    try {
+      await requestState('state-save', 'POST', { tasks, projects });
+      storageStatus.value = 'remote_ready';
+      storageMessage.value = '已手动同步到远程。';
+      return { ok: true };
+    } catch (error) {
+      storageStatus.value = 'remote_error';
+      storageMessage.value = error.status === 401 ? '密钥无效，无法同步。' : '远程同步失败。';
+      throw error;
+    }
+  };
+
+  const resolveConflict = async (strategy) => {
+    if (!conflictState.value) return null;
+
+    const localState = conflictState.value.local;
+    const remoteState = conflictState.value.remote;
+
+    if (strategy === 'local') {
+      pushSnapshot('before_local_overwrite_remote', localState, conflictState.value.summary || {});
+      await requestState('state-save', 'POST', localState);
+      persistLocalState(localState.tasks, localState.projects);
+      conflictState.value = null;
+      storageStatus.value = 'remote_ready';
+      storageMessage.value = '已保留本地并覆盖远程。';
+      return localState;
+    }
+
+    pushSnapshot('before_remote_overwrite_local', localState, conflictState.value.summary || {});
+    persistLocalState(remoteState.tasks, remoteState.projects, conflictState.value.remoteUpdatedAt || new Date().toISOString());
+    conflictState.value = null;
+    storageStatus.value = 'remote_ready';
+    storageMessage.value = '已采用远程数据。';
+    return remoteState;
+  };
+
+  const restoreSnapshot = (snapshotId) => {
+    const hit = snapshots.value.find(s => s.id === snapshotId);
+    if (!hit) return null;
+
+    const nextTasks = normalizeTasks(Array.isArray(hit.state?.tasks) ? hit.state.tasks : []);
+    const nextProjects = normalizeProjects(Array.isArray(hit.state?.projects) ? hit.state.projects : []);
+    persistLocalState(nextTasks, nextProjects);
+
+    return { tasks: nextTasks, projects: nextProjects, snapshot: hit };
+  };
+
+  const setMode = (mode) => {
+    persistStorageMode(mode);
+
+    if (storageMode.value === STORAGE_MODES.LOCAL_ONLY) {
+      storageStatus.value = 'local_only';
+      storageMessage.value = '已切换为本地模式。';
+      conflictState.value = null;
+      return;
+    }
+
+    storageStatus.value = 'idle';
+    storageMessage.value = '已切换到远程自动模式。';
+  };
+
   const exportData = (tasks, projects, showNotification) => {
     const data = {
       tasks,
@@ -317,14 +486,6 @@ export const useStorage = () => {
     showNotification('数据导出成功');
   };
 
-  /**
-   * 导入数据
-   * @param {Object} data - 导入的数据对象
-   * @param {Array} tasks - 任务 ref
-   * @param {Array} projects - 项目 ref
-   * @param {Function} showNotification - 通知函数
-   * @returns {boolean} 导入是否成功
-   */
   const importData = (data, tasksRef, projectsRef, showNotification) => {
     try {
       if (Array.isArray(data.tasks) && Array.isArray(data.projects)) {
@@ -335,9 +496,9 @@ export const useStorage = () => {
         saveToLocalStorage(normalizedTasks, normalizedProjects);
         showNotification('数据恢复成功！');
         return true;
-      } else {
-        throw new Error('格式无效');
       }
+
+      throw new Error('格式无效');
     } catch (err) {
       console.error('Import failed:', err);
       showNotification('导入失败：文件格式错误', 'error');
@@ -345,49 +506,24 @@ export const useStorage = () => {
     }
   };
 
-  const resolveConflict = async (strategy) => {
-    if (!conflictState.value) return null;
-
-    const localState = conflictState.value.local;
-    const remoteState = conflictState.value.remote;
-
-    if (strategy === 'local') {
-      try {
-        await requestState('state-save', 'POST', localState);
-        persistLocalState(localState.tasks, localState.projects);
-        conflictState.value = null;
-        storageStatus.value = 'ready';
-        storageMessage.value = '';
-        return localState;
-      } catch (error) {
-        if (error.status === 401) {
-          storageStatus.value = 'auth_failed';
-          storageMessage.value = '密钥无效，请重新输入。';
-        } else {
-          storageStatus.value = 'network_error';
-          storageMessage.value = '远程写入失败，请稍后再试。';
-        }
-        throw error;
-      }
-    }
-
-    persistLocalState(remoteState.tasks, remoteState.projects);
-    conflictState.value = null;
-    storageStatus.value = 'ready';
-    storageMessage.value = '';
-    return remoteState;
-  };
-
   return {
+    STORAGE_MODES,
+    storageMode,
+    canUseRemote,
+    isAutoSyncMode,
     storageStatus,
     storageMessage,
     magicKey,
     conflictState,
+    snapshots,
+    setMode,
     setMagicKey,
     clearMagicKey,
     resolveConflict,
+    restoreSnapshot,
     loadFromLocalStorage,
     saveToLocalStorage,
+    syncToRemote,
     exportData,
     importData
   };
