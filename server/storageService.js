@@ -1,5 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { neon } from '@neondatabase/serverless';
+import pg from 'pg';
+
+const { Pool } = pg;
+let pool = null;
 
 const safeEqual = (a, b) => {
   const left = Buffer.from(String(a || ''), 'utf8');
@@ -15,18 +18,25 @@ export const getSql = () => {
   if (!databaseUrl) {
     throw new Error('DATABASE_URL or NETLIFY_DATABASE_URL is missing');
   }
-  return neon(databaseUrl);
+
+  if (!pool) {
+    pool = new Pool({
+      connectionString: databaseUrl
+    });
+  }
+
+  return pool;
 };
 
 export const ensureStateTable = async (sql) => {
-  await sql`
+  await sql.query(`
     CREATE TABLE IF NOT EXISTS app_state (
       id smallint PRIMARY KEY CHECK (id = 1),
       tasks jsonb NOT NULL DEFAULT '[]'::jsonb,
       projects jsonb NOT NULL DEFAULT '[]'::jsonb,
       updated_at timestamptz NOT NULL DEFAULT now()
     )
-  `;
+  `);
 };
 
 export const requireMagicKeyFromHeaders = (headers) => {
@@ -59,12 +69,15 @@ export const normalizeStatePayload = (payload) => {
 };
 
 export const getState = async (sql) => {
-  const rows = await sql`SELECT tasks, projects, updated_at FROM app_state WHERE id = 1 LIMIT 1`;
-  if (!rows.length) {
+  const result = await sql.query(
+    'SELECT tasks, projects, updated_at FROM app_state WHERE id = $1 LIMIT 1',
+    [1]
+  );
+  if (!result.rows.length) {
     return { tasks: [], projects: [], updatedAt: null, empty: true };
   }
 
-  const row = rows[0];
+  const row = result.rows[0];
   return {
     tasks: Array.isArray(row.tasks) ? row.tasks : [],
     projects: Array.isArray(row.projects) ? row.projects : [],
@@ -77,13 +90,13 @@ export const upsertState = async (sql, tasks, projects) => {
   const tasksJson = JSON.stringify(tasks);
   const projectsJson = JSON.stringify(projects);
 
-  await sql`
+  await sql.query(`
     INSERT INTO app_state (id, tasks, projects, updated_at)
-    VALUES (1, ${tasksJson}::jsonb, ${projectsJson}::jsonb, now())
+    VALUES (1, $1::jsonb, $2::jsonb, now())
     ON CONFLICT (id)
     DO UPDATE SET
       tasks = EXCLUDED.tasks,
       projects = EXCLUDED.projects,
       updated_at = now()
-  `;
+  `, [tasksJson, projectsJson]);
 };

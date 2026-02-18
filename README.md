@@ -1,4 +1,4 @@
-# Todo List (Neon + Netlify Functions)
+# Todo List (CloudBase / Sealos Ready)
 
 ## 环境变量（Netlify）
 在 Netlify Site Settings -> Environment variables 添加：
@@ -54,6 +54,7 @@ curl -i https://your-site.netlify.app/.netlify/functions/state-get
 
 ## 生产部署（Sealos，推荐中国可访问）
 本仓库已内置 `Dockerfile` 与 `server/index.js`，可直接容器化部署（静态页面 + API 一体化）。
+服务端数据库驱动已改为 `pg`，可直接连接 Sealos / CloudBase 提供的 PostgreSQL。
 
 ### 1. 构建并推送镜像
 先把镜像推到你可用的镜像仓库（Docker Hub / 阿里云 ACR / 腾讯 TCR 等）：
@@ -68,7 +69,7 @@ docker push <your-registry>/todo-master:latest
 
 - 容器端口：`3000`
 - 环境变量：
-  - `DATABASE_URL`（推荐填 Sealos 内置 PostgreSQL 连接串）
+  - `DATABASE_URL`（Sealos 或 CloudBase PostgreSQL 连接串）
   - `MAGIC_KEY_HASH`（必填，建议）
   - `MAGIC_KEY`（可选，不推荐）
 
