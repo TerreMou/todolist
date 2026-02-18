@@ -18,7 +18,7 @@ const emit = defineEmits(['toggle-task-status', 'edit-task', 'soft-delete-task',
 
 <template>
   <div class="h-full overflow-y-auto custom-scroll">
-    <div class="container max-w-4xl mx-auto p-6 space-y-3">
+    <div class="container max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-3">
       <TransitionGroup name="list">
         <Card
           v-for="task in flatFilteredTasks"
@@ -30,8 +30,8 @@ const emit = defineEmits(['toggle-task-status', 'edit-task', 'soft-delete-task',
           ]"
           @click="emit('edit-task', task)"
         >
-          <CardContent class="p-4 flex flex-col gap-2.5">
-            <div class="flex items-start justify-between gap-4">
+          <CardContent class="p-3 sm:p-4 flex flex-col gap-2.5">
+            <div class="flex items-start justify-between gap-2 sm:gap-4">
               <div class="flex items-start gap-3 flex-1 min-w-0">
                 <button class="mt-0.5 shrink-0 focus:outline-none text-muted-foreground hover:text-primary transition-colors" @click.stop="emit('toggle-task-status', task.id)">
                   <CheckCircle2 v-if="task.completed" class="h-5 w-5" />
@@ -42,7 +42,7 @@ const emit = defineEmits(['toggle-task-status', 'edit-task', 'soft-delete-task',
                     <OverflowTooltipText
                       tag="span"
                       :class-name="[
-                        'font-medium text-sm leading-snug max-w-[380px] truncate',
+                        'font-medium text-sm leading-snug max-w-[220px] sm:max-w-[380px] truncate',
                         { 'line-through text-muted-foreground': task.completed }
                       ]"
                       :text="task.title"
@@ -60,12 +60,12 @@ const emit = defineEmits(['toggle-task-status', 'edit-task', 'soft-delete-task',
                 </div>
               </div>
 
-              <div class="flex items-center gap-2 shrink-0">
+              <div class="flex items-center gap-1 sm:gap-2 shrink-0">
                 <div v-if="isUrgent(task)" class="inline-flex items-center gap-1 text-amber-600 text-[10px] font-medium">
                   <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
                   紧急
                 </div>
-                <span v-if="task.dueDate" class="inline-flex items-center text-[10px] text-muted-foreground px-1 py-0.5 rounded">
+                <span v-if="task.dueDate" class="inline-flex items-center text-[10px] text-muted-foreground px-0.5 sm:px-1 py-0.5 rounded">
                   <CalendarIcon class="h-3 w-3 mr-1.5 opacity-70" /> {{ formatSimpleDate(task.dueDate) }}
                 </span>
               </div>
@@ -92,7 +92,7 @@ const emit = defineEmits(['toggle-task-status', 'edit-task', 'soft-delete-task',
                 </div>
               </div>
 
-              <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-auto">
+              <div class="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity ml-auto">
                 <Button variant="ghost" size="icon" class="h-7 w-7 text-muted-foreground hover:text-foreground" @click.stop="emit('edit-task', task)">
                   <PenSquare class="h-3.5 w-3.5" />
                 </Button>

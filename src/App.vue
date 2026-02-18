@@ -98,7 +98,7 @@ const showStorageKey = ref(false);
 </script>
 
 <template>
-  <div class="h-screen w-full overflow-hidden bg-background text-foreground font-sans flex flex-col">
+  <div class="h-dvh w-full overflow-hidden bg-background text-foreground font-sans flex flex-col">
     <TooltipProvider :delay-duration="180">
 
     <input type="file" ref="fileInput" class="hidden" accept=".json" @change="handleImport"/>
@@ -212,7 +212,7 @@ const showStorageKey = ref(false);
 
     <Transition name="slide-up">
       <div v-if="notification.show"
-           class="fixed bottom-6 right-6 px-5 py-3 rounded-xl shadow-2xl border bg-foreground text-background text-sm font-medium flex items-center gap-3 z-[60]">
+           class="fixed bottom-4 left-3 right-3 sm:left-auto sm:right-6 sm:bottom-6 sm:max-w-[420px] px-4 sm:px-5 py-3 rounded-xl shadow-2xl border bg-foreground text-background text-sm font-medium flex items-center gap-3 z-[60]">
         <AlertCircle v-if="notification.type === 'error'" class="h-4 w-4 text-red-400"/>
         <CheckCircle2 v-else class="h-4 w-4 text-emerald-400"/>
         {{ notification.message }}
@@ -243,7 +243,7 @@ const showStorageKey = ref(false);
       v-if="showStorageSettings"
       class="fixed inset-0 z-[80] bg-background/90 backdrop-blur-sm flex items-center justify-center px-4"
     >
-      <div class="w-full max-w-xl rounded-xl border bg-background shadow-xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+      <div class="w-full max-w-xl rounded-xl border bg-background shadow-xl p-4 sm:p-6 space-y-4 max-h-[90vh] sm:max-h-[85vh] overflow-y-auto">
         <div class="space-y-1">
           <h2 class="text-lg font-semibold">存储设置</h2>
           <p class="text-sm text-muted-foreground">你可以一直本地使用，也可以连接云端自动同步。</p>
@@ -305,7 +305,7 @@ const showStorageKey = ref(false);
           <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">本地快照恢复</p>
           <div v-if="snapshots.length === 0" class="text-xs text-muted-foreground">暂无快照</div>
           <div v-else class="space-y-2">
-            <div v-for="item in snapshots" :key="item.id" class="rounded-md border px-3 py-2 text-xs flex items-center justify-between gap-3">
+            <div v-for="item in snapshots" :key="item.id" class="rounded-md border px-3 py-2 text-xs flex items-center justify-between gap-2 sm:gap-3">
               <div class="min-w-0">
                 <p class="truncate font-medium">{{ item.reason }}</p>
                 <p class="text-muted-foreground">{{ formatConflictDateTime(item.createdAt) }}</p>
@@ -325,7 +325,7 @@ const showStorageKey = ref(false);
       v-if="showDataConflictPrompt"
       class="fixed inset-0 z-[90] bg-background/90 backdrop-blur-sm flex items-center justify-center px-4"
     >
-      <div class="w-full max-w-lg rounded-xl border bg-background shadow-xl p-6 space-y-4">
+      <div class="w-full max-w-lg rounded-xl border bg-background shadow-xl p-4 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
         <div class="space-y-1">
           <h2 class="text-lg font-semibold">发现数据冲突</h2>
           <p class="text-sm text-muted-foreground">

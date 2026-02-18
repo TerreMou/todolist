@@ -33,7 +33,7 @@ const emit = defineEmits([
 
 <template>
   <Dialog :open="open" @update:open="(v) => emit('update:open', v)">
-    <DialogContent class="sm:max-w-[900px] lg:max-w-[1000px] max-h-[calc(100vh-80px)] flex flex-col overflow-hidden">
+    <DialogContent class="w-[calc(100vw-24px)] sm:w-auto sm:max-w-[900px] lg:max-w-[1000px] max-h-[calc(100vh-40px)] sm:max-h-[calc(100vh-80px)] flex flex-col overflow-hidden p-4 sm:p-6">
       <DialogHeader>
         <DialogTitle>项目管理</DialogTitle>
         <DialogDescription>创建 or 编辑项目</DialogDescription>
@@ -41,13 +41,38 @@ const emit = defineEmits([
 
       <div class="flex-1 overflow-y-auto pr-2 custom-scroll">
         <div class="space-y-2 mb-4">
-          <div class="text-xs text-muted-foreground font-medium px-2">已有项目</div>
-          <div class="max-h-[200px] overflow-y-auto pr-2 custom-scroll border rounded-lg">
+          <div class="text-sm sm:text-xs text-muted-foreground font-medium px-1 sm:px-2">已有项目</div>
+          <div class="max-h-[240px] sm:max-h-[200px] overflow-y-auto pr-1 sm:pr-2 custom-scroll border rounded-lg">
             <div v-if="activeProjects.length === 0" class="text-xs text-muted-foreground text-center py-4">
               还没有项目，创建第一个吧
             </div>
             <div v-else class="min-w-full">
-              <div class="sticky top-0 z-10 grid grid-cols-12 gap-2 p-2 bg-background border-b text-xs font-medium text-muted-foreground shadow-sm">
+              <div class="sm:hidden p-2 space-y-2">
+                <div v-for="p in activeProjects" :key="`${p.id}-mobile`" class="rounded-lg border bg-background p-2.5 space-y-2">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0 space-y-1">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <Folder class="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <span class="font-medium text-sm truncate">{{ p.title }}</span>
+                      </div>
+                      <div class="text-xs text-muted-foreground line-clamp-2">{{ p.desc || '—' }}</div>
+                    </div>
+                    <Badge variant="outline" class="text-[11px] h-6 px-2 whitespace-nowrap shrink-0" :class="getProjectStatusStyle(p.status)">
+                      {{ getProjectStatusLabel(p.status) }}
+                    </Badge>
+                  </div>
+                  <div class="flex justify-end gap-1">
+                    <Button size="icon" variant="ghost" class="h-7 w-7" @click="emit('edit-project', p)">
+                      <PenSquare class="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="icon" variant="ghost" class="h-7 w-7 text-destructive hover:bg-destructive/10" @click="emit('delete-project', p.id)">
+                      <Trash2 class="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="hidden sm:grid sticky top-0 z-10 grid-cols-12 gap-2 p-2 bg-background border-b text-xs font-medium text-muted-foreground shadow-sm">
                 <div class="col-span-5">项目名称</div>
                 <div class="col-span-4">描述</div>
                 <div class="col-span-2">状态</div>
@@ -56,7 +81,7 @@ const emit = defineEmits([
               <div
                 v-for="p in activeProjects"
                 :key="p.id"
-                class="grid grid-cols-12 gap-2 p-2 items-center border-b hover:bg-accent/30 transition-colors group"
+                class="hidden sm:grid grid-cols-12 gap-2 p-2 items-center border-b hover:bg-accent/30 transition-colors group"
               >
                 <div class="col-span-5 flex items-center gap-2 min-w-0">
                   <Folder class="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -64,11 +89,11 @@ const emit = defineEmits([
                 </div>
                 <div class="col-span-4 text-xs text-muted-foreground truncate">{{ p.desc || '—' }}</div>
                 <div class="col-span-2">
-                  <Badge variant="outline" class="text-[10px] h-5" :class="getProjectStatusStyle(p.status)">
+                  <Badge variant="outline" class="text-[10px] h-6 px-2 whitespace-nowrap" :class="getProjectStatusStyle(p.status)">
                     {{ getProjectStatusLabel(p.status) }}
                   </Badge>
                 </div>
-                <div class="col-span-1 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div class="col-span-1 flex justify-end gap-1 opacity-80 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                   <Button size="icon" variant="ghost" class="h-6 w-6" @click="emit('edit-project', p)">
                     <PenSquare class="h-3 w-3" />
                   </Button>
@@ -83,7 +108,7 @@ const emit = defineEmits([
 
         <Separator />
 
-        <div class="space-y-4 pt-4 max-h-[500px] overflow-y-auto pr-2 custom-scroll">
+        <div class="space-y-4 pt-4 max-h-[500px] overflow-y-auto pr-1 sm:pr-2 custom-scroll">
           <div class="space-y-3">
             <div class="space-y-2">
               <Label class="text-xs text-muted-foreground font-medium">名称</Label>
@@ -95,7 +120,7 @@ const emit = defineEmits([
             </div>
           </div>
 
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
             <div class="space-y-3">
               <div class="space-y-2">
                 <Label class="text-xs text-muted-foreground font-medium">项目类型</Label>
@@ -146,7 +171,7 @@ const emit = defineEmits([
 
               <div class="space-y-2">
                 <Label class="text-xs text-muted-foreground font-medium">时间</Label>
-                <div class="flex gap-2">
+                <div class="flex gap-2 items-center">
                   <EnhancedDatePicker v-model="props.projectForm.startDate" placeholderText="开始" />
                   <span class="text-muted-foreground self-center text-xs">-</span>
                   <EnhancedDatePicker v-model="props.projectForm.endDate" placeholderText="结束" />
@@ -190,7 +215,7 @@ const emit = defineEmits([
         </div>
       </div>
 
-      <DialogFooter>
+      <DialogFooter class="pt-2 sm:pt-0 gap-2">
         <Button v-if="props.projectForm.id" variant="ghost" size="sm" @click="emit('reset-form')">取消</Button>
         <Button size="sm" @click="emit('submit')">{{ props.projectForm.id ? '更新' : '创建' }}</Button>
       </DialogFooter>

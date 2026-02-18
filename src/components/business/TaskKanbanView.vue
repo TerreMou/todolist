@@ -29,22 +29,24 @@ const emit = defineEmits([
 </script>
 
 <template>
-  <div class="kanban-container flex-1 w-full h-full overflow-x-auto flex gap-6 p-6 items-start custom-scroll">
+  <div
+    class="kanban-container flex-1 w-full h-full overflow-y-auto overflow-x-hidden sm:overflow-x-auto sm:overflow-y-hidden flex flex-col sm:flex-row gap-3 sm:gap-6 p-3 sm:p-6 items-stretch sm:items-start custom-scroll"
+  >
     <div
       v-for="group in groupedTasks"
       :key="group.data.id"
       :data-project-id="group.type === 'project' ? group.data.id : null"
-      class="w-[300px] shrink-0 flex flex-col max-h-full bg-muted/30 rounded-xl border min-h-0 transition-all"
+      class="w-full sm:w-[300px] shrink-0 flex flex-col sm:max-h-full bg-muted/30 rounded-xl border min-h-0 transition-all shadow-sm"
       :class="{ 'cursor-grab active:cursor-grabbing': isSortingMode && group.type === 'project' }"
     >
-      <div class="p-3 border-b flex flex-col gap-2 shrink-0 bg-muted/10 rounded-t-xl z-10">
+      <div class="p-3.5 border-b flex flex-col gap-2.5 shrink-0 bg-muted/10 rounded-t-xl z-10">
         <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 min-w-0">
             <component
               :is="isSortingMode && group.type === 'project' ? Grip : (group.type === 'project' ? Folder : ArchiveRestore)"
               class="h-4 w-4 text-muted-foreground flex-shrink-0 hover:text-foreground transition-colors"
             />
-            <OverflowTooltipText tag="h3" class-name="font-semibold text-sm truncate max-w-[140px]" :text="group.data.title" />
+            <OverflowTooltipText tag="h3" class-name="font-semibold text-base sm:text-sm truncate max-w-[160px] sm:max-w-[140px]" :text="group.data.title" />
 
             <Badge
               v-if="group.type === 'project'"
@@ -59,13 +61,13 @@ const emit = defineEmits([
           </div>
 
           <div class="flex items-center gap-1">
-            <Button v-if="group.data.status !== 'completed'" variant="ghost" size="icon" class="h-7 w-7" @click="emit('open-create-task', group.data.id)">
+            <Button v-if="group.data.status !== 'completed'" variant="ghost" size="icon" class="h-8 w-8 sm:h-7 sm:w-7" @click="emit('open-create-task', group.data.id)">
               <Plus class="h-4 w-4" />
             </Button>
 
             <DropdownMenu v-if="group.type === 'project'">
               <DropdownMenuTrigger as-child>
-                <Button variant="ghost" size="icon" class="h-7 w-7">
+                <Button variant="ghost" size="icon" class="h-8 w-8 sm:h-7 sm:w-7">
                   <MoreHorizontal class="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -84,7 +86,7 @@ const emit = defineEmits([
           </div>
         </div>
 
-        <div v-if="group.type === 'project' && (group.data.projectType || group.data.eventType || group.data.businessLine)" class="flex gap-2">
+        <div v-if="group.type === 'project' && (group.data.projectType || group.data.eventType || group.data.businessLine)" class="flex gap-2 flex-wrap">
           <Badge v-if="group.data.projectType" variant="secondary" class="text-[10px] px-2 py-0.5 h-5">
             {{ projectTypeOptions.find(t => t.value === group.data.projectType)?.label || group.data.projectType }}
           </Badge>
@@ -116,7 +118,7 @@ const emit = defineEmits([
         </div>
       </div>
 
-      <div class="p-3 flex-1 overflow-y-auto min-h-0 space-y-3 custom-scroll">
+      <div class="p-3 sm:flex-1 sm:overflow-y-auto overflow-visible min-h-0 space-y-3 custom-scroll">
         <TransitionGroup name="list">
           <Card
             v-for="task in group.tasks"
@@ -176,7 +178,7 @@ const emit = defineEmits([
                       :text="`联系人: ${task.contact}`"
                     />
 
-                    <div class="shrink-0 flex gap-1 ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div class="shrink-0 flex gap-1 ml-auto opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                       <Button variant="ghost" size="icon" class="h-6 w-6 hover:bg-muted text-muted-foreground" title="编辑" @click.stop="emit('edit-task', task)">
                         <PenSquare class="h-3.5 w-3.5" />
                       </Button>
@@ -209,6 +211,6 @@ const emit = defineEmits([
       </div>
     </div>
 
-    <div class="w-2 shrink-0"></div>
+    <div class="hidden sm:block w-2 shrink-0"></div>
   </div>
 </template>

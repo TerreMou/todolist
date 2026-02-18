@@ -20,7 +20,7 @@ const emit = defineEmits(['update:open', 'submit']);
 
 <template>
   <Dialog :open="open" @update:open="(v) => emit('update:open', v)">
-    <DialogContent class="sm:max-w-[500px]">
+    <DialogContent class="max-w-[calc(100vw-1.25rem)] sm:max-w-[500px]">
       <DialogHeader>
         <DialogTitle>{{ editingId ? '编辑任务' : '新建任务' }}</DialogTitle>
         <DialogDescription class="sr-only">Task Form</DialogDescription>
@@ -37,7 +37,7 @@ const emit = defineEmits(['update:open', 'submit']);
           <Textarea v-model="props.form.desc" class="resize-none" rows="3" />
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="space-y-2">
             <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">所属项目</Label>
             <Select v-model="props.form.projectId">
@@ -75,7 +75,7 @@ const emit = defineEmits(['update:open', 'submit']);
           <EnhancedDatePicker v-model="props.form.date" />
         </div>
 
-        <div class="grid grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div class="space-y-2">
             <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">类型</Label>
             <Select v-model="props.form.taskType">
@@ -93,7 +93,7 @@ const emit = defineEmits(['update:open', 'submit']);
         </div>
       </div>
 
-      <DialogFooter>
+      <DialogFooter class="flex-col-reverse sm:flex-row gap-2">
         <Button variant="outline" @click="emit('update:open', false)">取消</Button>
         <Button @click="emit('submit')">{{ editingId ? '保存' : '创建' }}</Button>
       </DialogFooter>

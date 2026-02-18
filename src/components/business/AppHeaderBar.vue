@@ -12,7 +12,7 @@ const emit = defineEmits(['create-task', 'open-projects', 'open-trash', 'open-ke
 
 <template>
   <header class="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur shrink-0 flex-none">
-    <div class="container max-w-full px-6 flex h-14 items-center justify-between">
+    <div class="container max-w-full px-3 sm:px-6 flex h-14 items-center justify-between">
       <div class="flex items-center gap-2">
         <span class="font-bold text-lg tracking-tight">Jo's List</span>
       </div>
@@ -25,6 +25,12 @@ const emit = defineEmits(['create-task', 'open-projects', 'open-trash', 'open-ke
         <Button variant="outline" size="sm" class="h-9 gap-2 border-dashed hidden sm:flex" @click="emit('open-projects')">
           <Settings2 class="h-4 w-4" />
           项目管理
+        </Button>
+        <Button variant="ghost" size="icon" class="sm:hidden" @click="emit('create-task')">
+          <Plus class="h-4 w-4" />
+        </Button>
+        <Button variant="ghost" size="icon" class="sm:hidden" @click="emit('open-projects')">
+          <Settings2 class="h-4 w-4" />
         </Button>
         <Button variant="ghost" size="icon" @click="emit('open-key-config')">
           <KeyRound class="h-4 w-4" />
