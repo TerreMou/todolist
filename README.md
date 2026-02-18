@@ -1,4 +1,4 @@
-# Todo List (CloudBase / Sealos Ready)
+# Todo List (CloudBase Ready)
 
 ## 环境变量（Netlify）
 在 Netlify Site Settings -> Environment variables 添加：
@@ -52,40 +52,46 @@ curl -i https://your-site.netlify.app/.netlify/functions/state-get
 
 返回 `401` 表示正常（函数已部署，未带密钥所以拒绝访问）；如果是 `404` 说明函数未部署成功。
 
-## 生产部署（Sealos，推荐中国可访问）
-本仓库已内置 `Dockerfile` 与 `server/index.js`，可直接容器化部署（静态页面 + API 一体化）。
-服务端数据库驱动已改为 `pg`，可直接连接 Sealos / CloudBase 提供的 PostgreSQL。
+## 生产部署（腾讯云 CloudBase）
+本仓库已内置 `Dockerfile` 与 `server/index.js`，采用“前端静态资源 + Node API 一体化”方式部署。
+服务端数据库驱动使用 `pg`，可直接连接 CloudBase / 腾讯云 PostgreSQL。
 
-### 1. 构建并推送镜像
-先把镜像推到你可用的镜像仓库（Docker Hub / 阿里云 ACR / 腾讯 TCR 等）：
+### 1. 推送代码到远端分支
+当前建议分支：`feat/cloudbase-deploy`
 
 ```bash
-docker build -t <your-registry>/todo-master:latest .
-docker push <your-registry>/todo-master:latest
+git push -u origin feat/cloudbase-deploy
 ```
 
-### 2. 在 Sealos 部署应用
-在 Sealos 控制台创建 Docker 应用，镜像填写上一步地址，配置：
+### 2. 在 CloudBase 新建云托管服务
+建议使用 CloudBase Run（云托管）并选择“从代码仓库部署”或“上传代码包”。
 
+- 运行环境：Node.js 容器（按仓库 `Dockerfile` 构建）
 - 容器端口：`3000`
-- 环境变量：
-  - `DATABASE_URL`（Sealos 或 CloudBase PostgreSQL 连接串）
-  - `MAGIC_KEY_HASH`（必填，建议）
-  - `MAGIC_KEY`（可选，不推荐）
+- 启动命令：默认（`npm run start`，已在 Dockerfile/脚本配置）
 
-> 如果你在 Sealos 里创建了 PostgreSQL，可在数据库连接信息里复制连接串填到 `DATABASE_URL`。
+### 3. 配置环境变量（必须）
+- `DATABASE_URL`：CloudBase / 腾讯云 PostgreSQL 连接串
+- `MAGIC_KEY_HASH`：你的密钥 SHA-256（推荐）
+- `MAGIC_KEY`：可选，不推荐
 
-### 3. 验证 API 与前端
-部署完成后访问：
+### 4. 发布并验证
+部署完成后先测 API：
 
 ```bash
-curl -i https://<your-sealos-domain>/.netlify/functions/state-get
+curl -i https://<your-cloudbase-domain>/.netlify/functions/state-get
 ```
 
-- 返回 `401`：API 正常（只是未带密钥）
-- 返回 `404`：应用路由未生效或不是这个镜像版本
+- 返回 `401`：API 正常（未带密钥，被鉴权拦截）
+- 返回 `404`：服务路由未生效或部署版本不对
 
-然后浏览器打开 `https://<your-sealos-domain>` 进行正常使用。
+再在浏览器访问：
+
+```text
+https://<your-cloudbase-domain>/#key=你的明文密钥
+```
+
+首次可自动写入密钥并完成本地/远程初始化。
 
 ## 本地旧数据迁移
 应用启动时会自动执行：
