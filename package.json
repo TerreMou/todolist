@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node server/index.js",
+    "sealos:build": "npm run build",
+    "sealos:start": "npm run start"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.1",
