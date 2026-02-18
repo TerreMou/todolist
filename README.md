@@ -1,4 +1,4 @@
-# Todo List (CloudBase Ready)
+# Todo List (CloudBase MySQL Ready)
 
 ## 环境变量（Netlify）
 在 Netlify Site Settings -> Environment variables 添加：
@@ -54,7 +54,7 @@ curl -i https://your-site.netlify.app/.netlify/functions/state-get
 
 ## 生产部署（腾讯云 CloudBase）
 本仓库已内置 `Dockerfile` 与 `server/index.js`，采用“前端静态资源 + Node API 一体化”方式部署。
-服务端数据库驱动使用 `pg`，可直接连接 CloudBase / 腾讯云 PostgreSQL。
+服务端数据库驱动使用 `mysql2`，可直接连接 CloudBase SQL（MySQL）。
 
 ### 1. 推送代码到远端分支
 当前建议分支：`feat/cloudbase-deploy`
@@ -71,7 +71,7 @@ git push -u origin feat/cloudbase-deploy
 - 启动命令：默认（`npm run start`，已在 Dockerfile/脚本配置）
 
 ### 3. 配置环境变量（必须）
-- `DATABASE_URL`：CloudBase / 腾讯云 PostgreSQL 连接串
+- `DATABASE_URL`：MySQL 连接串（示例：`mysql://user:password@host:3306/dbname`）
 - `MAGIC_KEY_HASH`：你的密钥 SHA-256（推荐）
 - `MAGIC_KEY`：可选，不推荐
 

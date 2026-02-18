@@ -12,13 +12,12 @@
     "sealos:start": "npm run start"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.0.1",
     "@vueuse/core": "14.1.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "date-fns": "4.1.0",
     "lucide-vue-next": "0.556.0",
-    "pg": "^8.13.3",
+    "mysql2": "^3.11.5",
     "reka-ui": "2.6.1",
     "sortablejs": "1.15.7",
     "tailwind-merge": "3.4.0",

@@ -1,7 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import pg from 'pg';
+import mysql from 'mysql2/promise';
 
-const { Pool } = pg;
 let pool = null;
 
 const jsonHeaders = {
@@ -42,8 +41,11 @@ export const getSql = () => {
   }
 
   if (!pool) {
-    pool = new Pool({
-      connectionString: databaseUrl
+    pool = mysql.createPool({
+      uri: databaseUrl,
+      waitForConnections: true,
+      connectionLimit: 5,
+      namedPlaceholders: false
     });
   }
 
@@ -53,10 +55,10 @@ export const getSql = () => {
 export const ensureStateTable = async (sql) => {
   await sql.query(`
     CREATE TABLE IF NOT EXISTS app_state (
-      id smallint PRIMARY KEY CHECK (id = 1),
-      tasks jsonb NOT NULL DEFAULT '[]'::jsonb,
-      projects jsonb NOT NULL DEFAULT '[]'::jsonb,
-      updated_at timestamptz NOT NULL DEFAULT now()
+      id TINYINT PRIMARY KEY,
+      tasks JSON NOT NULL,
+      projects JSON NOT NULL,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
 };
@@ -102,18 +104,20 @@ export const normalizeStatePayload = (payload) => {
 };
 
 export const getState = async (sql) => {
-  const result = await sql.query(
-    'SELECT tasks, projects, updated_at FROM app_state WHERE id = $1 LIMIT 1',
+  const [rows] = await sql.query(
+    'SELECT tasks, projects, updated_at FROM app_state WHERE id = ? LIMIT 1',
     [1]
   );
-  if (!result.rows.length) {
+  if (!rows.length) {
     return { tasks: [], projects: [], updatedAt: null, empty: true };
   }
 
-  const row = result.rows[0];
+  const row = rows[0];
+  const safeTasks = Array.isArray(row.tasks) ? row.tasks : JSON.parse(row.tasks || '[]');
+  const safeProjects = Array.isArray(row.projects) ? row.projects : JSON.parse(row.projects || '[]');
   return {
-    tasks: Array.isArray(row.tasks) ? row.tasks : [],
-    projects: Array.isArray(row.projects) ? row.projects : [],
+    tasks: Array.isArray(safeTasks) ? safeTasks : [],
+    projects: Array.isArray(safeProjects) ? safeProjects : [],
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
     empty: false
   };
@@ -125,12 +129,11 @@ export const upsertState = async (sql, tasks, projects) => {
 
   await sql.query(`
     INSERT INTO app_state (id, tasks, projects, updated_at)
-    VALUES (1, $1::jsonb, $2::jsonb, now())
-    ON CONFLICT (id)
-    DO UPDATE SET
-      tasks = EXCLUDED.tasks,
-      projects = EXCLUDED.projects,
-      updated_at = now()
+    VALUES (1, CAST(? AS JSON), CAST(? AS JSON), CURRENT_TIMESTAMP)
+    ON DUPLICATE KEY UPDATE
+      tasks = VALUES(tasks),
+      projects = VALUES(projects),
+      updated_at = CURRENT_TIMESTAMP
   `, [tasksJson, projectsJson]);
 };
 
