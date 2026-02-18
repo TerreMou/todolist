@@ -67,13 +67,7 @@ export const validateTaskTitle = (title, showNotification) => {
  * @param {Function} showNotification - 通知函数
  * @returns {boolean}
  */
-export const validateTaskProject = (projectId, showNotification) => {
-  if (!projectId || projectId === 'none') {
-    showNotification('请选择所属项目', 'error');
-    return false;
-  }
-  return true;
-};
+export const validateTaskProject = () => true;
 
 /**
  * 验证截止日期

@@ -70,10 +70,33 @@ export const useStorage = () => {
 
   const hasAnyData = (state) => state.tasks.length > 0 || state.projects.length > 0;
 
+  const canonicalize = (value) => {
+    if (Array.isArray(value)) {
+      return value.map(canonicalize);
+    }
+
+    if (value && typeof value === 'object') {
+      const sorted = {};
+      Object.keys(value)
+        .sort()
+        .forEach((key) => {
+          const next = value[key];
+          if (next !== undefined) {
+            sorted[key] = canonicalize(next);
+          }
+        });
+      return sorted;
+    }
+
+    return value;
+  };
+
+  const stableStringify = (value) => JSON.stringify(canonicalize(value));
+
   const isSameState = (left, right) => {
     if (!left || !right) return false;
-    return JSON.stringify(left.tasks) === JSON.stringify(right.tasks)
-      && JSON.stringify(left.projects) === JSON.stringify(right.projects);
+    return stableStringify(left.tasks) === stableStringify(right.tasks)
+      && stableStringify(left.projects) === stableStringify(right.projects);
   };
 
   const persistLocalState = (tasks, projects) => {

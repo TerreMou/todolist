@@ -63,7 +63,7 @@ const emit = defineEmits([
           <div v-for="proj in trashProjects" :key="proj.id" class="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
             <div class="flex flex-col">
               <span class="text-sm font-medium line-through text-muted-foreground truncate max-w-[200px]">{{ proj.title }}</span>
-              <span class="text-[10px] text-muted-foreground">关联任务将一同恢复</span>
+              <span class="text-[10px] text-muted-foreground">关联任务已转为未归档，不受项目恢复影响</span>
             </div>
             <div class="flex gap-2">
               <Button size="sm" variant="outline" class="h-7 text-xs" @click="emit('restore-project', proj.id)">恢复</Button>

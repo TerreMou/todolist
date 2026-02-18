@@ -104,14 +104,21 @@ export const useAppController = () => {
 
   const groupedTasks = computed(() => {
     const groups = [];
-    const filteredTasks = getSortedFilteredTasks(
+    const filteredTasksBySearch = getSortedFilteredTasks(
       activeTasks.value,
       searchQuery.value,
       filterStatus.value,
       filterTypes.value
     );
+    const filteredTasksWithoutSearch = getSortedFilteredTasks(
+      activeTasks.value,
+      '',
+      filterStatus.value,
+      filterTypes.value
+    );
+    const query = searchQuery.value.trim().toLowerCase();
 
-    const inboxTasks = filteredTasks.filter(t => !t.projectId || t.projectId === 'none');
+    const inboxTasks = filteredTasksBySearch.filter(t => !t.projectId || t.projectId === 'none');
     groups.push({
       type: 'inbox',
       data: {
@@ -129,7 +136,9 @@ export const useAppController = () => {
       .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
 
     sortedProjects.forEach(proj => {
-      const projTasks = filteredTasks.filter(t => isSameId(t.projectId, proj.id));
+      const projectMatched = query && proj.title.toLowerCase().includes(query);
+      const sourceTasks = projectMatched ? filteredTasksWithoutSearch : filteredTasksBySearch;
+      const projTasks = sourceTasks.filter(t => isSameId(t.projectId, proj.id));
       const stats = getProjectTaskStats(proj.id);
 
       groups.push({
@@ -140,9 +149,8 @@ export const useAppController = () => {
       });
     });
 
-    if (!searchQuery.value.trim()) return groups;
+    if (!query) return groups;
 
-    const query = searchQuery.value.toLowerCase();
     return groups.filter(g => {
       const hasMatchingTasks = g.tasks.length > 0;
       const isProjectMatch = g.data.title.toLowerCase().includes(query);
@@ -340,11 +348,11 @@ export const useAppController = () => {
   };
 
   const handleDeleteProject = (projectId) => {
-    confirmSoftDeleteProject(projectId, true);
+    confirmSoftDeleteProject(projectId);
   };
 
   const handlePermanentDeleteProject = (projectId) => {
-    confirmPermanentDeleteProject(projectId, true);
+    confirmPermanentDeleteProject(projectId);
   };
 
   const toggleFilterType = (cat) => {

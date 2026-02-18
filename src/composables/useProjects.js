@@ -138,61 +138,37 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
   };
 
   /**
-   * 恢复项目和相关任务
+   * 恢复项目（任务已在删除时解绑，不做任务恢复）
    */
   const restoreProject = (projectId) => {
     const project = projectsRef.value.find(p => p.id === projectId);
     if (project) {
       project.isDeleted = false;
       project.deletedAt = null;
-
-      let count = 0;
-      tasksRef.value.forEach(t => {
-        if (isSameId(t.projectId, projectId) && t.isDeleted) {
-          t.isDeleted = false;
-          t.deletedAt = null;
-          count++;
-        }
-      });
-
-      showNotification(`项目及 ${count} 个任务已恢复`);
+      showNotification('项目已恢复');
       return true;
     }
     return false;
   };
 
   /**
-   * 软删除项目（处理关联任务）
+   * 软删除项目（关联任务解绑为未归档）
    * @param {number} projectId - 项目 ID
-   * @param {boolean} deleteTasks - 是否同时删除任务
    */
-  const confirmSoftDeleteProject = (projectId, deleteTasks = false) => {
+  const confirmSoftDeleteProject = (projectId) => {
     const project = projectsRef.value.find(p => p.id === projectId);
     if (!project) return false;
 
     project.isDeleted = true;
     project.deletedAt = new Date().toISOString();
 
-    if (deleteTasks) {
-      // 同时把任务移到回收站
-      let count = 0;
-      tasksRef.value.forEach(t => {
-        if (isSameId(t.projectId, projectId) && !t.isDeleted) {
-          t.isDeleted = true;
-          t.deletedAt = new Date().toISOString();
-          count++;
-        }
-      });
-      showNotification(`项目及 ${count} 个任务已移至回收站`);
-    } else {
-      // 任务解绑
-      tasksRef.value.forEach(t => {
-        if (isSameId(t.projectId, projectId)) {
-          t.projectId = null;
-        }
-      });
-      showNotification('项目已移至回收站，关联任务已解绑');
-    }
+    // 任务解绑为未归档
+    tasksRef.value.forEach(t => {
+      if (isSameId(t.projectId, projectId)) {
+        t.projectId = null;
+      }
+    });
+    showNotification('项目已移至回收站，关联任务已移至未归档');
 
     return true;
   };
@@ -200,20 +176,14 @@ export const useProjects = (projectsRef, tasksRef, showNotification) => {
   /**
    * 永久删除项目
    * @param {number} projectId - 项目 ID
-   * @param {boolean} deleteTasks - 是否同时删除任务
    */
-  const confirmPermanentDeleteProject = (projectId, deleteTasks = false) => {
-    if (deleteTasks) {
-      // 删除关联的任务
-      tasksRef.value = tasksRef.value.filter(t => !isSameId(t.projectId, projectId));
-    } else {
-      // 解绑任务
-      tasksRef.value.forEach(t => {
-        if (isSameId(t.projectId, projectId)) {
-          t.projectId = null;
-        }
-      });
-    }
+  const confirmPermanentDeleteProject = (projectId) => {
+    // 解绑任务
+    tasksRef.value.forEach(t => {
+      if (isSameId(t.projectId, projectId)) {
+        t.projectId = null;
+      }
+    });
 
     // 删除项目
     projectsRef.value = projectsRef.value.filter(p => p.id !== projectId);

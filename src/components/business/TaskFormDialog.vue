@@ -39,7 +39,7 @@ const emit = defineEmits(['update:open', 'submit']);
 
         <div class="grid grid-cols-2 gap-4">
           <div class="space-y-2">
-            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">所属项目 *</Label>
+            <Label class="text-xs text-muted-foreground font-medium uppercase tracking-wide">所属项目</Label>
             <Select v-model="props.form.projectId">
               <SelectTrigger><SelectValue placeholder="选择项目" /></SelectTrigger>
               <SelectContent>
